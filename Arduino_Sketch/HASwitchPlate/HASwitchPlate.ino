@@ -129,10 +129,16 @@ String mqttLightStateTopic;                         // MQTT topic for outgoing p
 String mqttLightBrightCommandTopic;                 // MQTT topic for incoming panel backlight dimmer commands
 String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
-String nextionModel;                                // Record reported model number of LCD panel
-const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF};    // Standard suffix for Nextion commands
-uint32_t tftFileSize = 0;                           // Filesize for TFT firmware upload
-uint8_t nextionResetPin = D6;                       // Pin for Nextion power rail switch (GPIO12/D6)
+
+//TODO: surround w/ INDEF
+String mqttLDRStateTopic;                // MQTT topic for the LDR value
+unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
+unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
+
+String nextionModel;                             // Record reported model number of LCD panel
+const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
+uint32_t tftFileSize = 0;                        // Filesize for TFT firmware upload
+uint8_t nextionResetPin = D6;                    // Pin for Nextion power rail switch (GPIO12/D6)
 
 WiFiClient wifiClient;
 WiFiClient wifiMQTTClient;
@@ -313,6 +319,8 @@ void loop()
     motionUpdate();
   }
 
+  // TODO: surround w/ IFDEF
+  ldrUpdate();
   if (debugTelnetEnabled)
   {
     handleTelnetClient(); // telnetClient loop
@@ -2542,6 +2550,48 @@ void motionUpdate()
   }
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void ldrUpdate()
+/* Checks the LDR value on intervals configured by ldrUpdateInterval.
+ * 
+ * The A0 pin has a range from 0 to 1 V. We'll supply the LDR with 3.3v but need to figure out
+ *  the other resistor value so that the maximum voltage at the A0 pin is 1V. The LDR decreases
+ *  its resistance the more light shines on it. So the LDR will have the least resistance in a 
+ *  bright room. The values of resistance for a LDR can differ so the resistor value below may need
+ *  to be tweaked.
+ *  
+ *  Circuit looks like this:
+ *    3.3v+ --> LDR -+--{10KΩ}-->[GND]
+ *                   |
+ *                  A0
+ *                  
+ *  See: https://arduino.stackexchange.com/questions/16525/why-should-i-put-a-10k-resistor-with-an-ldr
+ *  
+ *  TODO: teest this circuit!
+ *  
+ */
+// TODO: wrap w/ IFDEF
+{
+  // When did we last check and is that more than ldrUpdateInterval in the past?
+  if (millis() - ldrLastUpdateTime >= ldrUpdateInterval)
+  {
+
+    // Now() - lastCheck is bigger than the interval so we're due for a check!
+    debugPrintln("LDR: Reading...");
+    ldrValue = analogRead(A0);
+    debugPrintln(String(F("LDR: value:")) + String(ldrValue));
+    mqttClient.publish(mqttLDRStateTopic, String(ldrValue);
+
+    // Update the lastUpdateTime
+    ldrLastUpdateTime = millis()
+  }
+  else
+  {
+    // No Update
+    //debugPrintln(String(F("LDR: value:")) + String(ldrValue));
+    debugPrintln("LDR: no update, too soon!");
+  }
+}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void handleTelnetClient()
 { // Basic telnet client handling code from: https://gist.github.com/tablatronix/4793677ca748f5f584c95ec4a2b10303
