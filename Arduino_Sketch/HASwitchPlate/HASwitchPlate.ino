@@ -69,6 +69,15 @@ char motionPinConfig[3] = "0";
 #include <EEPROM.h>
 #include <SoftwareSerial.h>
 
+//TODO: surround w/ IFDEF
+#include <FastLED.h>
+#define NUM_LEDS 4
+// TODO: figure out which pin this actually is...
+#define DATA_PIN 6
+
+// The array of pixels
+CRGB leds[NUM_LEDS];
+
 const float haspVersion = 0.40;                     // Current HASP software release version
 byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the panel
 uint8_t nextionReturnIndex = 0;                     // Index for nextionReturnBuffer
@@ -134,6 +143,8 @@ String mqttMotionStateTopic;                        // MQTT topic for outgoing m
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
+
+String mqttLightBarState; // MQTT topic for the NeoPixel strip
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -232,6 +243,9 @@ void setup()
 
   motionSetup(); // Setup motion sensor if configured
 
+  //TODO: Wrap in IFDEF
+  pixelSetup();
+
   if (beepEnabled)
   { // Setup beep/tactile if configured
     beepPin = 4;
@@ -321,6 +335,9 @@ void loop()
 
   // TODO: surround w/ IFDEF
   ldrUpdate();
+
+  pixelUpdate();
+
   if (debugTelnetEnabled)
   {
     handleTelnetClient(); // telnetClient loop
@@ -505,6 +522,13 @@ void mqttCallback(String &strTopic, String &strPayload)
   // '[...]/device/command/espupdate' -m '' = espStartOta("espFirmwareUrl")
   // '[...]/device/command/p[1].b[4].txt' -m '' = nextionGetAttr("p[1].b[4].txt")
   // '[...]/device/command/p[1].b[4].txt' -m '"Lights On"' = nextionSetAttr("p[1].b[4].txt", "\"Lights On\"")
+  /////
+  // We'll need a new topic for the light bar. Ideally, one topic takes a payload that describes the
+  //    state of each pixel. As of *right now* there are 4 pixels, but the code *should* work off of NUM_LEDS
+  // I think the easiest way to do this is by using the JSON functions that are already present
+  //
+  // '[...]/device/command/pixel' -m '{"1": [100, 200, 255],"2": [255, 0, 0],"3": [0, 255, 0],"4": [0, 0, 255]}'
+  //    sets pixel 1 to a TEAL like color and the next three pixels to RED, GREEN, BLUE respectively.
 
   debugPrintln(String(F("MQTT IN: '")) + strTopic + "' : '" + strPayload + "'");
 
@@ -527,6 +551,10 @@ void mqttCallback(String &strTopic, String &strPayload)
   else if (strTopic == (mqttCommandTopic + "/json") || strTopic == (mqttGroupCommandTopic + "/json"))
   {                               // '[...]/device/command/json' -m '["dim=5", "page 1"]' = nextionSendCmd("dim=50"), nextionSendCmd("page 1")
     nextionParseJson(strPayload); // Send to nextionParseJson()
+  }
+  else if (strTopic == (mqttCommandTopic + "/pixel") || strTopic == (mqttGroupCommandTopic + "/json"))
+  {
+    pixelParseJson(strPayload);
   }
   else if (strTopic == (mqttCommandTopic + "/statusupdate") || strTopic == (mqttGroupCommandTopic + "/statusupdate"))
   {                     // '[...]/device/command/statusupdate' == mqttStatusUpdate()
@@ -2592,6 +2620,67 @@ void ldrUpdate()
     debugPrintln("LDR: no update, too soon!");
   }
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void pixelSetup()
+/*
+ *  Set up the FastLED library
+ *  See: https://github.com/FastLED/FastLED/wiki/Overview#platforms
+ *
+ */
+// TODO: wrap w/ IFDEF
+{
+  debugPrintln("PIXEL: Setting up...");
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void pixelParseJson(String &strPayload)
+/* Very similar to nextionParseJson
+ * Decompose a JSON object with one array per pixel and write to the pixels[] buffer
+ * 
+*/
+{
+  // Allocate room for document on the heap
+  // The JSON document is very small:
+  //  - open/close brace are two bytes
+  //  - each 'pixel': "px":[255,255,255]:
+  //    is 3 bytes for the color, two bytes for the commas and two more for the brackets
+  //    and two for quotes around the key + a char for the index. about 10 bytes per pixel
+  //    So we do 12 bytes * NUM_LEDS
+  debugPrintln(String(F("PIXEL: Allocated ")) + String(NUM_LEDS * 12) + " bytes");
+  DynamicJsonDocument pixelStates(NUM_LEDS * 12);
+
+  DeserializationError jsonError = deserializeJson(pixelStates, strPayload);
+
+  if (jsonError)
+  { // Couldn't parse incoming JSON command
+    debugPrintln(String(F("MQTT: [ERROR] Failed to parse incoming JSON command with error: ")) + String(jsonError.c_str()));
+  }
+  else
+  {
+    deserializeJson(pixelStates, strPayload);
+    // TODO: dump the whole payload here to get an idea of what i'm workiing with
+    for (uint8_t i = 0; i < pixelStates.size(); i++)
+    {
+      nextionSendCmd(nextionCommands[i]);
+      delayMicroseconds(500); // Larger JSON objects can take a while to run through over serial,
+    }                         // give the ESP and Nextion a moment to deal with life
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void pixelUpdate()
+/*
+ * Take any new MQTT data... i think?
+ *
+ */
+// TODO: wrap w/ IFDEF
+{
+  debugPrintln("PIXEL: Setting up...");
+  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void handleTelnetClient()
 { // Basic telnet client handling code from: https://gist.github.com/tablatronix/4793677ca748f5f584c95ec4a2b10303
