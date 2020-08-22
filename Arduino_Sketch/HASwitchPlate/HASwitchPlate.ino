@@ -358,6 +358,9 @@ void loop()
 void mqttConnect()
 { // MQTT connection and subscriptions
 
+  // Generate an MQTT client ID as haspNode + our MAC address
+  mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
+
   static bool mqttFirstConnect = true; // For the first connection, we want to send an OFF/ON state to
                                        // trigger any automations, but skip that if we reconnect while
                                        // still running the sketch
@@ -393,7 +396,7 @@ void mqttConnect()
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
   //TODO : wrap with IFDEF
-  mqttLDRStateTopic = "hasp/" + String(haspNode) + "/ldr/state";
+  mqttLDRStateTopic = "hasp/" + String(mqttClientId) + "/ldr/state";
 
   const String mqttCommandSubscription = mqttCommandTopic + "/#";
   const String mqttGroupCommandSubscription = mqttGroupCommandTopic + "/#";
@@ -406,8 +409,6 @@ void mqttConnect()
     // Create a reconnect counter
     static uint8_t mqttReconnectCount = 0;
 
-    // Generate an MQTT client ID as haspNode + our MAC address
-    mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
     nextionSendCmd("page 0");
     nextionSetAttr("p[0].b[1].font", "6");
     nextionSetAttr("p[0].b[1].txt", "\"WiFi Connected!\\r " + String(WiFi.SSID()) + "\\rIP: " + WiFi.localIP().toString() + "\\r\\rMQTT Connecting:\\r " + String(mqttServer) + "\"");
