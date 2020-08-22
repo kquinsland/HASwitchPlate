@@ -2593,7 +2593,10 @@ void ldrUpdate()
     ldrValue = analogRead(A0);
     debugPrintln(String(F("LDR: '")) + String(mqttLDRStateTopic) + String("' => ") + String(ldrValue));
 
-    mqttClient.publish(mqttLDRStateTopic, String(ldrValue));
+    // a very simple JSON document
+    String ldrConfigPayload = "{\"ldr_value\":\"" + String(ldrValue) + "\"}";
+
+    mqttClient.publish(mqttLDRStateTopic, ldrConfigPayload);
     // Update the lastUpdateTime
     ldrLastUpdateTime = millis();
   }
