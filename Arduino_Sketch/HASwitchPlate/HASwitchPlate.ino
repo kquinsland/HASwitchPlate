@@ -2558,7 +2558,9 @@ void ldrUpdate()
  *  the other resistor value so that the maximum voltage at the A0 pin is 1V. The LDR decreases
  *  its resistance the more light shines on it. So the LDR will have the least resistance in a 
  *  bright room. The values of resistance for a LDR can differ so the resistor value below may need
- *  to be tweaked.
+ *  to be tweaked. Mine had values from ~ 300 Ohm with a bright flashlight directly on it to ~5k
+ *  in a typical room and about 45Kohm with my finger over it.
+ *
  *  
  *  Circuit looks like this:
  *    3.3v+ --> LDR -+--{10KΩ}-->[GND]
@@ -2567,7 +2569,8 @@ void ldrUpdate()
  *                  
  *  See: https://arduino.stackexchange.com/questions/16525/why-should-i-put-a-10k-resistor-with-an-ldr
  *  
- *  TODO: teest this circuit!
+ *  This results in sensor values around 600-700 in the same 'typical' room and values around 150-200
+ *    or so with my finger above it.
  *  
  */
 // TODO: wrap w/ IFDEF
