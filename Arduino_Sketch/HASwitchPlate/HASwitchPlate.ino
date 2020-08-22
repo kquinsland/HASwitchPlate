@@ -131,12 +131,11 @@ String mqttLightBrightStateTopic;                   // MQTT topic for outgoing p
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
 //TODO: surround w/ INDEF
+String mqttLDRDiscoveryTopic;               // MQTT topic for home-assistant auto discovery
 String mqttLDRStateTopic;                   // MQTT topic for the LDR value
 unsigned long ldrUpdateInterval = 10000;    // miliseconds to wait between LDR updates (10000 => 10s)
 unsigned long ldrLastUpdateTime = millis(); // holds the milis() time of the last LDR check
-
-// TODO: wrap with IFDEF
-float ldrValue = 0; // The value from LDR
+float ldrValue = 0;                         // The value from LDR
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -235,6 +234,9 @@ void setup()
   mqttConnect();                                                // Connect to MQTT
 
   motionSetup(); // Setup motion sensor if configured
+
+  // TODO: wrap w/ IFDEF
+  ldrSetup(); // Setup LDR
 
   if (beepEnabled)
   { // Setup beep/tactile if configured
@@ -2526,6 +2528,64 @@ void motionSetup()
     motionPin = D2;
     pinMode(motionPin, INPUT);
   }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void ldrSetup()
+/*
+  Take this oppertunity to announce to home assistant that we have a LDR
+  This works because HomeAssistant supports MQTT based auto-discovery
+  See: https://www.home-assistant.io/docs/mqtt/discovery/
+
+  MQTT topic that we write the config document to must be in this format:
+  <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
+
+  
+*/
+{
+  // Topic we'll write to
+  mqttLDRDiscoveryTopic = "homeassistant/sensor/" + String(mqttClientId) + "/ldr/config";
+
+  /*
+  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
+  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR but to save
+  * users the trouble of having to further customize the sensor in HA, we claim to be of class 'illuminance'
+  * 
+  * The JSON that we send to HA should look like this:
+  *     //TODO
+  */
+
+  //mqttStateTopic = "hasp/" + String(haspNode) + "/state";
+
+  // Configuration document. Start with the name
+  String ldrConfigPayload = "{\"name\":\"" + String(haspNode) + "\",";
+
+  // Add the MAC with the name to make a unique_id
+  ldrConfigPayload += String("\"unique_id\":\"" + mqttClientId + "\",");
+
+  // Then tell HA what topic it can get the LDR state from
+  ldrConfigPayload += String("\"state_topic\":\"" + mqttLDRStateTopic + "\",");
+
+  /*
+  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
+  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR so we claim
+  * to be from that class, but override the unit of measure to be accurate to our abilities
+  * 
+  * See: https://www.home-assistant.io/integrations/sensor/#device-class
+  */
+  ldrConfigPayload += String("\"device_class\": \"illuminance\",");
+  ldrConfigPayload += String("\"unit_of_measurement\": \"volt\",");
+
+  // Last, tell HomeAssistant how to parse the value from the payload in the topic ^
+  // "value_template": "{{ value_json.ldr_value}}"
+  ldrConfigPayload += String("\"value_template\": \"{{ value_json.ldr_value}}\"");
+
+  ldrConfigPayload += "}";
+
+  debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
+  debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(ldrConfigPayload));
+
+  mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
