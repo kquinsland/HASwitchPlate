@@ -131,9 +131,12 @@ String mqttLightBrightStateTopic;                   // MQTT topic for outgoing p
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
 //TODO: surround w/ INDEF
-String mqttLDRStateTopic;                // MQTT topic for the LDR value
-unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
-unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
+String mqttLDRStateTopic;                   // MQTT topic for the LDR value
+unsigned long ldrUpdateInterval = 10000;    // miliseconds to wait between LDR updates (10000 => 10s)
+unsigned long ldrLastUpdateTime = millis(); // holds the milis() time of the last LDR check
+
+// TODO: wrap with IFDEF
+float ldrValue = 0; // The value from LDR
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -214,7 +217,8 @@ void setup()
   webServer.on("/resetBacklight", webHandleResetBacklight);
   webServer.on("/firmware", webHandleFirmware);
   webServer.on("/espfirmware", webHandleEspFirmware);
-  webServer.on("/lcdupload", HTTP_POST, []() { webServer.send(200); }, webHandleLcdUpload);
+  webServer.on(
+      "/lcdupload", HTTP_POST, []() { webServer.send(200); }, webHandleLcdUpload);
   webServer.on("/tftFileSize", webHandleTftFileSize);
   webServer.on("/lcddownload", webHandleLcdDownload);
   webServer.on("/lcdOtaSuccess", webHandleLcdUpdateSuccess);
@@ -387,6 +391,9 @@ void mqttConnect()
   mqttLightBrightCommandTopic = "hasp/" + String(haspNode) + "/brightness/set";
   mqttLightBrightStateTopic = "hasp/" + String(haspNode) + "/brightness/state";
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
+
+  //TODO : wrap with IFDEF
+  mqttLDRStateTopic = "hasp/" + String(haspNode) + "/ldr/state";
 
   const String mqttCommandSubscription = mqttCommandTopic + "/#";
   const String mqttGroupCommandSubscription = mqttGroupCommandTopic + "/#";
@@ -2578,23 +2585,16 @@ void ldrUpdate()
 // TODO: wrap w/ IFDEF
 {
   // When did we last check and is that more than ldrUpdateInterval in the past?
-  if (millis() - ldrLastUpdateTime >= ldrUpdateInterval)
+  if ((millis() - ldrLastUpdateTime) >= ldrUpdateInterval)
   {
 
     // Now() - lastCheck is bigger than the interval so we're due for a check!
-    debugPrintln("LDR: Reading...");
     ldrValue = analogRead(A0);
-    debugPrintln(String(F("LDR: value:")) + String(ldrValue));
-    mqttClient.publish(mqttLDRStateTopic, String(ldrValue);
+    debugPrintln(String(F("LDR: '")) + String(mqttLDRStateTopic) + String("' => ") + String(ldrValue));
 
+    mqttClient.publish(mqttLDRStateTopic, String(ldrValue));
     // Update the lastUpdateTime
-    ldrLastUpdateTime = millis()
-  }
-  else
-  {
-    // No Update
-    //debugPrintln(String(F("LDR: value:")) + String(ldrValue));
-    debugPrintln("LDR: no update, too soon!");
+    ldrLastUpdateTime = millis();
   }
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
