@@ -77,17 +77,17 @@ char motionPinConfig[3] = "0";
 
 // After a lot of fustration/testing, d0 does not work.
 // D1 and D2 work, though. I don't understand why.
-#define LED_ATA_PIN    D1
+#define LED_ATA_PIN D1
 
 // GRB seems to be a 'common' color order
 #define LED_COLOR_ORDER GRB
-#define NUM_LEDS    4
+#define NUM_LEDS 4
 
-#define LED_TYPE    WS2812B
-#define BRIGHTNESS  64
+#define LED_TYPE WS2812B
+// A scalar for brightness. Use this to adjust brightness to account for color/thickness of plastic faceplate
+// See: http://fastled.io/docs/3.1/class_c_fast_l_e_d.html#a730ba7d967e882b4b893689cf333b2eb
+#define BRIGHTNESS 64
 CRGB leds[NUM_LEDS];
-
-
 
 const float haspVersion = 0.40;                     // Current HASP software release version
 byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the panel
@@ -236,7 +236,8 @@ void setup()
   webServer.on("/resetBacklight", webHandleResetBacklight);
   webServer.on("/firmware", webHandleFirmware);
   webServer.on("/espfirmware", webHandleEspFirmware);
-  webServer.on("/lcdupload", HTTP_POST, []() { webServer.send(200); }, webHandleLcdUpload);
+  webServer.on(
+      "/lcdupload", HTTP_POST, []() { webServer.send(200); }, webHandleLcdUpload);
   webServer.on("/tftFileSize", webHandleTftFileSize);
   webServer.on("/lcddownload", webHandleLcdDownload);
   webServer.on("/lcdOtaSuccess", webHandleLcdUpdateSuccess);
@@ -564,7 +565,7 @@ void mqttCallback(String &strTopic, String &strPayload)
   {                               // '[...]/device/command/json' -m '["dim=5", "page 1"]' = nextionSendCmd("dim=50"), nextionSendCmd("page 1")
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
-  else if (strTopic == (mqttCommandTopic + "/pixel") || strTopic == (mqttGroupCommandTopic + "/json"))
+  else if (strTopic == (mqttCommandTopic + "/pixel") || strTopic == (mqttGroupCommandTopic + "/pixel"))
   {
     pixelParseJson(strPayload);
   }
@@ -2644,16 +2645,17 @@ void pixelSetup()
 {
   debugPrintln("PIXEL: Setting up...");
   FastLED.addLeds<LED_TYPE, LED_DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
-  FastLED.setCorrection( TypicalLEDStrip );
-  FastLED.setBrightness( BRIGHTNESS );
+  // Use 'standard' color correction/gama curves
+  FastLED.setCorrection(TypicalLEDStrip);
+  FastLED.setBrightness(BRIGHTNESS);
   FastLED.clear();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void pixelParseJson(String &strPayload)
 /* Very similar to nextionParseJson
- * Decompose a JSON object with one array per pixel and write to the pixels[] buffer
- * 
+ * Decompose a JSON object with one array per pixel and write to the pixels[] buffer before telling
+ *  FastLED to update the strip.
 */
 {
   // Allocate room for document on the heap
@@ -2663,8 +2665,9 @@ void pixelParseJson(String &strPayload)
   //    is 3 bytes for the color, two bytes for the commas and two more for the brackets
   //    and two for quotes around the key + a char for the index. about 10 bytes per pixel
   //    So we do 12 bytes * NUM_LEDS
-  debugPrintln(String(F("PIXEL: Allocated ")) + String(NUM_LEDS * 12) + " bytes");
-  DynamicJsonDocument pixelStates(NUM_LEDS * 12);
+  int pxl_bytes = 12 * NUM_LEDS;
+  debugPrintln(String(F("PIXEL: Allocated ")) + String(pxl_bytes) + " bytes");
+  DynamicJsonDocument pixelStates(pxl_bytes);
 
   DeserializationError jsonError = deserializeJson(pixelStates, strPayload);
 
@@ -2675,7 +2678,7 @@ void pixelParseJson(String &strPayload)
   else
   {
     deserializeJson(pixelStates, strPayload);
-    // TODO: dump the whole payload here to get an idea of what i'm workiing with
+    // TODO: dump the whole payload here to get an idea of what i'm working with
     for (uint8_t i = 0; i < pixelStates.size(); i++)
     {
       nextionSendCmd(nextionCommands[i]);
@@ -2692,17 +2695,17 @@ void pixelUpdate()
  */
 // TODO: wrap w/ IFDEF
 {
-  
-  fill_solid (leds, NUM_LEDS, CRGB::Red);
+
+  fill_solid(leds, NUM_LEDS, CRGB::Red);
   FastLED.show();
   delay(200);
-  fill_solid (leds, NUM_LEDS, CRGB::Blue);
+  fill_solid(leds, NUM_LEDS, CRGB::Blue);
   FastLED.show();
   delay(200);
-  fill_solid (leds, NUM_LEDS, CRGB::Green);
+  fill_solid(leds, NUM_LEDS, CRGB::Green);
   FastLED.show();
   delay(200);
-  fill_solid (leds, NUM_LEDS, CRGB::White);
+  fill_solid(leds, NUM_LEDS, CRGB::White);
   FastLED.show();
 }
 
