@@ -70,13 +70,24 @@ char motionPinConfig[3] = "0";
 #include <SoftwareSerial.h>
 
 //TODO: surround w/ IFDEF
-#include <FastLED.h>
-#define NUM_LEDS 4
-// TODO: figure out which pin this actually is...
-#define DATA_PIN 6
 
-// The array of pixels
+// Tell FASTLED to use raw pin order. MUST be defined *before* library is included!
+#define FASTLED_ESP8266_RAW_PIN_ORDER
+#include "FastLED.h"
+
+// After a lot of fustration/testing, d0 does not work.
+// D1 and D2 work, though. I don't understand why.
+#define LED_ATA_PIN    D1
+
+// GRB seems to be a 'common' color order
+#define LED_COLOR_ORDER GRB
+#define NUM_LEDS    4
+
+#define LED_TYPE    WS2812B
+#define BRIGHTNESS  64
 CRGB leds[NUM_LEDS];
+
+
 
 const float haspVersion = 0.40;                     // Current HASP software release version
 byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the panel
@@ -336,6 +347,7 @@ void loop()
   // TODO: surround w/ IFDEF
   ldrUpdate();
 
+  //TODO: surround w/ IFDEF
   pixelUpdate();
 
   if (debugTelnetEnabled)
@@ -2631,7 +2643,10 @@ void pixelSetup()
 // TODO: wrap w/ IFDEF
 {
   debugPrintln("PIXEL: Setting up...");
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+  FastLED.addLeds<LED_TYPE, LED_DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.setCorrection( TypicalLEDStrip );
+  FastLED.setBrightness( BRIGHTNESS );
+  FastLED.clear();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2677,8 +2692,18 @@ void pixelUpdate()
  */
 // TODO: wrap w/ IFDEF
 {
-  debugPrintln("PIXEL: Setting up...");
-  FastLED.addLeds<NEOPIXEL, DATA_PIN>(leds, NUM_LEDS);
+  
+  fill_solid (leds, NUM_LEDS, CRGB::Red);
+  FastLED.show();
+  delay(200);
+  fill_solid (leds, NUM_LEDS, CRGB::Blue);
+  FastLED.show();
+  delay(200);
+  fill_solid (leds, NUM_LEDS, CRGB::Green);
+  FastLED.show();
+  delay(200);
+  fill_solid (leds, NUM_LEDS, CRGB::White);
+  FastLED.show();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
