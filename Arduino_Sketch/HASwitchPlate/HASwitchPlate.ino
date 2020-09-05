@@ -154,6 +154,7 @@ String mqttMotionStateTopic;                        // MQTT topic for outgoing m
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
+float ldrValue;
 
 String mqttLightBarState; // MQTT topic for the NeoPixel strip
 
