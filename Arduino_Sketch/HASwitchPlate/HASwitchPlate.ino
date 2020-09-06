@@ -75,9 +75,9 @@ char motionPinConfig[3] = "0";
 #define FASTLED_ESP8266_RAW_PIN_ORDER
 #include "FastLED.h"
 
-// After a lot of fustration/testing, d0 does not work.
+// After a lot of frustration/testing, d0 does not work.
 // D1 and D2 work, though. I don't understand why.
-#define LED_ATA_PIN D1
+#define LED_DATA_PIN D1
 
 // GRB seems to be a 'common' color order
 #define LED_COLOR_ORDER GRB
@@ -89,8 +89,25 @@ char motionPinConfig[3] = "0";
 #define BRIGHTNESS 64
 CRGB leds[NUM_LEDS];
 
+/*
+    Allocate room for document on the heap. The document should be quite small, At most, about 128 bytes for a payload that looks like this:
+    {
+      "v": 1,
+      "p": {
+        "1": [255, 255, 255],
+        "2": [255, 255, 255],
+        "3": [255, 255, 255],
+        "4": [255, 255, 255]
+      }
+    }
+
+  The JSON object will have 2 objects, one of the objects will be NUM_LEDS
+*/
+// See: https://arduinojson.org/v6/assistant/
+const int pixelJsonBufferSize = JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3));
+
 const float haspVersion = 0.40;                     // Current HASP software release version
-byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the panel
+byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the pael
 uint8_t nextionReturnIndex = 0;                     // Index for nextionReturnBuffer
 uint8_t nextionActivePage = 0;                      // Track active LCD page
 bool lcdConnected = false;                          // Set to true when we've heard something from the LCD
@@ -1265,8 +1282,8 @@ void espWifiSetup()
     WiFiManagerParameter custom_mqttHeader("<br/><br/><b>MQTT Broker</b>");
     WiFiManagerParameter custom_mqttServer("mqttServer", "MQTT Server", mqttServer, 63, " maxlength=39");
     WiFiManagerParameter custom_mqttPort("mqttPort", "MQTT Port", mqttPort, 5, " maxlength=5 type='number'");
-    WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 31, " maxlength=31");
-    WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 31, " maxlength=31 type='password'");
+    WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 128, " maxlength=128");
+    WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 128, " maxlength=128 type='password'");
     WiFiManagerParameter custom_configHeader("<br/><br/><b>Admin access</b>");
     WiFiManagerParameter custom_configUser("configUser", "Config User", configUser, 15, " maxlength=31'");
     WiFiManagerParameter custom_configPassword("configPassword", "Config Password", configPassword, 31, " maxlength=31 type='password'");
@@ -1708,8 +1725,8 @@ void webHandleRoot()
   httpMessage += String(F("<br/><br/><b>Group Name</b> <i><small>(required)</small></i><input id='groupName' required name='groupName' maxlength=15 placeholder='Group Name' value='")) + String(groupName) + "'>";
   httpMessage += String(F("<br/><br/><b>MQTT Broker</b> <i><small>(required)</small></i><input id='mqttServer' required name='mqttServer' maxlength=63 placeholder='mqttServer' value='")) + String(mqttServer) + "'>";
   httpMessage += String(F("<br/><b>MQTT Port</b> <i><small>(required)</small></i><input id='mqttPort' required name='mqttPort' type='number' maxlength=5 placeholder='mqttPort' value='")) + String(mqttPort) + "'>";
-  httpMessage += String(F("<br/><b>MQTT User</b> <i><small>(optional)</small></i><input id='mqttUser' name='mqttUser' maxlength=31 placeholder='mqttUser' value='")) + String(mqttUser) + "'>";
-  httpMessage += String(F("<br/><b>MQTT Password</b> <i><small>(optional)</small></i><input id='mqttPassword' name='mqttPassword' type='password' maxlength=31 placeholder='mqttPassword' value='"));
+  httpMessage += String(F("<br/><b>MQTT User</b> <i><small>(optional)</small></i><input id='mqttUser' name='mqttUser' maxlength=127 placeholder='mqttUser' value='")) + String(mqttUser) + "'>";
+  httpMessage += String(F("<br/><b>MQTT Password</b> <i><small>(optional)</small></i><input id='mqttPassword' name='mqttPassword' type='password' maxlength=127 placeholder='mqttPassword' value='"));
   if (strlen(mqttPassword) != 0)
   {
     httpMessage += String("********");
@@ -1866,12 +1883,12 @@ void webHandleSaveConfig()
   if (webServer.arg("mqttUser") != String(mqttUser))
   { // Handle mqttUser
     shouldSaveConfig = true;
-    webServer.arg("mqttUser").toCharArray(mqttUser, 32);
+    webServer.arg("mqttUser").toCharArray(mqttUser, 128);
   }
   if (webServer.arg("mqttPassword") != String("********"))
   { // Handle mqttPassword
     shouldSaveConfig = true;
-    webServer.arg("mqttPassword").toCharArray(mqttPassword, 32);
+    webServer.arg("mqttPassword").toCharArray(mqttPassword, 128);
   }
   if (webServer.arg("configUser") != String(configUser))
   { // Handle configUser
@@ -2621,17 +2638,17 @@ void ldrUpdate()
     // Now() - lastCheck is bigger than the interval so we're due for a check!
     debugPrintln("LDR: Reading...");
     ldrValue = analogRead(A0);
-    debugPrintln(String(F("LDR: value:")) + String(ldrValue));
-    mqttClient.publish(mqttLDRStateTopic, String(ldrValue);
+    //debugPrintln(String("LDR: value:") + String(ldrValue));
+    mqttClient.publish(mqttLDRStateTopic, String(ldrValue));
 
     // Update the lastUpdateTime
-    ldrLastUpdateTime = millis()
+    ldrLastUpdateTime = millis();
   }
   else
   {
     // No Update
     //debugPrintln(String(F("LDR: value:")) + String(ldrValue));
-    debugPrintln("LDR: no update, too soon!");
+    //debugPrintln("LDR: no update, too soon!");
   }
 }
 
@@ -2645,7 +2662,7 @@ void pixelSetup()
 // TODO: wrap w/ IFDEF
 {
   debugPrintln("PIXEL: Setting up...");
-  FastLED.addLeds<LED_TYPE, LED_DATA_PIN, COLOR_ORDER>(leds, NUM_LEDS);
+  FastLED.addLeds<LED_TYPE, LED_DATA_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
   // Use 'standard' color correction/gama curves
   FastLED.setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(BRIGHTNESS);
@@ -2659,54 +2676,73 @@ void pixelParseJson(String &strPayload)
  *  FastLED to update the strip.
 */
 {
-  // Allocate room for document on the heap
-  // The JSON document is very small:
-  //  - open/close brace are two bytes
-  //  - each 'pixel': "px":[255,255,255]:
-  //    is 3 bytes for the color, two bytes for the commas and two more for the brackets
-  //    and two for quotes around the key + a char for the index. about 10 bytes per pixel
-  //    So we do 12 bytes * NUM_LEDS
-  int pxl_bytes = 12 * NUM_LEDS;
-  debugPrintln(String(F("PIXEL: Allocated ")) + String(pxl_bytes) + " bytes");
-  DynamicJsonDocument pixelStates(pxl_bytes);
+  /*
+    Allocate room for document on the heap. The document should be quite small, At most, about 128 bytes for a payload that looks like this:
+    {
+      "v": 1,
+      "p": {
+        "1": [255, 255, 255],
+        "2": [255, 255, 255],
+        "3": [255, 255, 255],
+        "4": [255, 255, 255]
+      }
+    }
+  */
+  DynamicJsonDocument pixelDocument(2 * pixelJsonBufferSize);
 
-  DeserializationError jsonError = deserializeJson(pixelStates, strPayload);
+  // print out the number of bytes to get a rough idea of sizes
+  debugPrintln(String("PIXELS: needed " + String(strPayload.length()) + " bytes, allocated: " + String(pixelDocument.capacity())));
+
+  // string -> JSON
+  DeserializationError jsonError = deserializeJson(pixelDocument, strPayload);
 
   if (jsonError)
   { // Couldn't parse incoming JSON command
-    debugPrintln(String(F("MQTT: [ERROR] Failed to parse incoming JSON command with error: ")) + String(jsonError.c_str()));
+    debugPrintln(String("PIXELS: [ERROR] Failed to parse incoming JSON command with error: ") + String(jsonError.c_str()));
+    return;
   }
-  else
+
+  // Try to get the 'v' key and verify that it's set to version 1
+  JsonVariantConst hasVersion = pixelDocument["v"];
+  if (hasVersion.isNull() || hasVersion != 1)
   {
-    deserializeJson(pixelStates, strPayload);
-    // TODO: dump the whole payload here to get an idea of what i'm working with
-    for (uint8_t i = 0; i < pixelStates.size(); i++)
-    {
-      nextionSendCmd(nextionCommands[i]);
-      delayMicroseconds(500); // Larger JSON objects can take a while to run through over serial,
-    }                         // give the ESP and Nextion a moment to deal with life
+    debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(hasVersion.as<int>() + "'"));
+    return;
   }
+
+  // Basic sanity check passed, pull out the 'p' object and iterate through it for RGB arrays
+  JsonObject pixels = pixelDocument["p"];
+  if (pixels.isNull())
+  {
+    debugPrintln(String("PIXELS: [ERROR] Unable to parse Pixels."));
+    return;
+  }
+
+  debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
+
+  for (uint8_t i = 0; i < pixels.size(); i++)
+  {
+    debugPrintln(String("PIXEL: State num: ") + String(i));
+    JsonArray pixel_data = pixels[String(i)];
+
+    int r;
+    int g;
+    int b;
+    r = pixel_data[0];
+    g = pixel_data[1];
+    b = pixel_data[2];
+    leds[i] = CRGB(r, g, b);
+    debugPrintln(String("Pixel ") + String(i) + " will be r:" + String(r) + " g:" + String(g) + " b:" + String(leds[i]));
+  }
+  debugPrintln(String("Calling pixelUpdate..."));
+  pixelUpdate();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void pixelUpdate()
-/*
- * Take any new MQTT data... i think?
- *
- */
 // TODO: wrap w/ IFDEF
 {
-
-  fill_solid(leds, NUM_LEDS, CRGB::Red);
-  FastLED.show();
-  delay(200);
-  fill_solid(leds, NUM_LEDS, CRGB::Blue);
-  FastLED.show();
-  delay(200);
-  fill_solid(leds, NUM_LEDS, CRGB::Green);
-  FastLED.show();
-  delay(200);
-  fill_solid(leds, NUM_LEDS, CRGB::White);
+  //debugPrintln(String("pixelUpdate alive!"));
   FastLED.show();
 }
 
