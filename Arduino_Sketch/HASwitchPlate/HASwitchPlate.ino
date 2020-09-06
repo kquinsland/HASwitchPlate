@@ -2760,7 +2760,7 @@ void pixelSetup()
   debugPrintln("PIXEL: Callling announcePixelsToHA");
   announcePixelsToHA();
 }
-
+////////////////////////////////////////////////////////////////////////////////////////////////////
 void announcePixelsToHA()
 {
   /*
@@ -2789,53 +2789,76 @@ void announcePixelsToHA()
   The payload will look something like this:
     Note: ~ is the base topic
 
+  To save space, HomeAssistant supports 'minified' keys.
+  See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
+  'uniq_id':             'unique_id',
+  'dev':                 'device',
+  'avty'                 'availability',
+  't':                   'topic',
+  'pl_not_avail':        'payload_not_available',
+  'pl_avail':            'payload_available',
+  'cmd_t':               'command_topic',
+  'cmd_off_tpl':         'command_off_template',
+  'cmd_on_tpl':          'command_on_template',
+
+
+  'bri_cmd_t':           'brightness_command_topic',
+  'bri_tpl':             'brightness_template',
+  'bri_stat_t':          'brightness_state_topic',
+  'bri_val_tpl':         'brightness_value_template',
+  'bri_scl':             'brightness_scale',
+
+  'rgb_cmd_t':           'rgb_command_topic',
+  'rgb_cmd_tpl':         'rgb_command_template',
+  'rgb_stat_t':          'rgb_state_topic',
+  'rgb_val_tpl':         'rgb_value_template',
+
+  Ultimately, this is the JSON that we need to send to MQTT for HomeAssistant to fully configure each pixel:
 
     {
       "~": "homeassistant/light/$MqttID/",
       "name": "$nodeName-$PixelID",
 
-      "unique_id": "$nodeName-$PixelID",
-      "device": {
+      "uniq_id": "$nodeName-$PixelID",
+      "dev": {
         "name": "$nodeName",
         "model": "hasp1.0",
-        "SW_version": "$haspVersion",
+        "sw_version": "$haspVersion",
         "connections": [
           ["mac", "02:5b:26:a8:dc:12"]
         ]
       },
 
-      "availability": {
-        "topic": "",
-        "payload_not_available": "",
-        "payload_available": ""
+      "avty": {
+        "t": "",
+        "pl_not_avail": "",
+        "pl_avail": ""
       },
 
-      "command_topic": "",
-      "command_off_template": "",
-      "command_on_template": "",
+      "cmd_t": "",
+      "cmd_off_tpl": "",
+      "cmd_on_tpl": "",
 
-      "brightness_command_topic": "",
-      "brightness_template": "",
+      "bri_cmd_t": "",
+      "bri_tpl": "",
 
-      "brightness_state_topic": "",
-      "brightness_value_template": "",
+      "bri_stat_t": "",
+      "bri_val_tpl": "",
 
-      "brightness_scale": "FastLED.getBrightness()", 
+      "bri_scl": "FastLED.getBrightness()", 
       "brightness": "true",
 
-      "rgb_command_topic": "",
-      "rgb_command_template": "",
-      "rgb_state_topic": ""
-
+      "rgb_cmd_t": "",
+      "rgb_cmd_tpl": "",
+      "rgb_stat_t": "",
+      "rgb_val_tpl": ""
     }
-    // TODO: minify the keys to save space!!!!
-    See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
   */
 
   //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(17) + 511;
+  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(18) + 379;
 
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
