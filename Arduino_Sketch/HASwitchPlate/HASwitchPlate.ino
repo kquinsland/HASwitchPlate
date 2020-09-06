@@ -173,6 +173,7 @@ String mqttLightBrightStateTopic;                   // MQTT topic for outgoing p
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
 //TODO: surround w/ INDEF
+<<<<<<< HEAD
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
@@ -181,6 +182,13 @@ float ldrValue;
 #ifdef NEOPIXEL_SUPPORT
 String mqttLightBarState; // MQTT topic for the NeoPixel strip
 #endif
+=======
+String mqttLDRDiscoveryTopic;               // MQTT topic for home-assistant auto discovery
+String mqttLDRStateTopic;                   // MQTT topic for the LDR value
+unsigned long ldrUpdateInterval = 10000;    // miliseconds to wait between LDR updates (10000 => 10s)
+unsigned long ldrLastUpdateTime = millis(); // holds the milis() time of the last LDR check
+float ldrValue = 0;                         // The value from LDR
+>>>>>>> add-ldr
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -280,9 +288,14 @@ void setup()
 
   motionSetup(); // Setup motion sensor if configured
 
+<<<<<<< HEAD
 #ifdef NEOPIXEL_SUPPORT
   pixelSetup();
 #endif
+=======
+  // TODO: wrap w/ IFDEF
+  ldrSetup(); // Setup LDR
+>>>>>>> add-ldr
 
   if (beepEnabled)
   { // Setup beep/tactile if configured
@@ -411,6 +424,9 @@ void loop()
 void mqttConnect()
 { // MQTT connection and subscriptions
 
+  // Generate an MQTT client ID as haspNode + our MAC address
+  mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
+
   static bool mqttFirstConnect = true; // For the first connection, we want to send an OFF/ON state to
                                        // trigger any automations, but skip that if we reconnect while
                                        // still running the sketch
@@ -445,6 +461,9 @@ void mqttConnect()
   mqttLightBrightStateTopic = "hasp/" + String(haspNode) + "/brightness/state";
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
+  //TODO : wrap with IFDEF
+  mqttLDRStateTopic = "hasp/" + String(mqttClientId) + "/ldr/state";
+
   const String mqttCommandSubscription = mqttCommandTopic + "/#";
   const String mqttGroupCommandSubscription = mqttGroupCommandTopic + "/#";
   const String mqttLightSubscription = "hasp/" + String(haspNode) + "/light/#";
@@ -456,8 +475,6 @@ void mqttConnect()
     // Create a reconnect counter
     static uint8_t mqttReconnectCount = 0;
 
-    // Generate an MQTT client ID as haspNode + our MAC address
-    mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
     nextionSendCmd("page 0");
     nextionSetAttr("p[0].b[1].font", "6");
     nextionSetAttr("p[0].b[1].txt", "\"WiFi Connected!\\r " + String(WiFi.SSID()) + "\\rIP: " + WiFi.localIP().toString() + "\\r\\rMQTT Connecting:\\r " + String(mqttServer) + "\"");
@@ -2589,6 +2606,64 @@ void motionSetup()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+void ldrSetup()
+/*
+  Take this oppertunity to announce to home assistant that we have a LDR
+  This works because HomeAssistant supports MQTT based auto-discovery
+  See: https://www.home-assistant.io/docs/mqtt/discovery/
+
+  MQTT topic that we write the config document to must be in this format:
+  <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
+
+  
+*/
+{
+  // Topic we'll write to
+  mqttLDRDiscoveryTopic = "homeassistant/sensor/" + String(mqttClientId) + "/ldr/config";
+
+  /*
+  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
+  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR but to save
+  * users the trouble of having to further customize the sensor in HA, we claim to be of class 'illuminance'
+  * 
+  * The JSON that we send to HA should look like this:
+  *     //TODO
+  */
+
+  //mqttStateTopic = "hasp/" + String(haspNode) + "/state";
+
+  // Configuration document. Start with the name
+  String ldrConfigPayload = "{\"name\":\"" + String(haspNode) + "\",";
+
+  // Add the MAC with the name to make a unique_id
+  ldrConfigPayload += String("\"unique_id\":\"" + mqttClientId + "\",");
+
+  // Then tell HA what topic it can get the LDR state from
+  ldrConfigPayload += String("\"state_topic\":\"" + mqttLDRStateTopic + "\",");
+
+  /*
+  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
+  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR so we claim
+  * to be from that class, but override the unit of measure to be accurate to our abilities
+  * 
+  * See: https://www.home-assistant.io/integrations/sensor/#device-class
+  */
+  ldrConfigPayload += String("\"device_class\": \"illuminance\",");
+  ldrConfigPayload += String("\"unit_of_measurement\": \"volt\",");
+
+  // Last, tell HomeAssistant how to parse the value from the payload in the topic ^
+  // "value_template": "{{ value_json.ldr_value}}"
+  ldrConfigPayload += String("\"value_template\": \"{{ value_json.ldr_value}}\"");
+
+  ldrConfigPayload += "}";
+
+  debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
+  debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(ldrConfigPayload));
+
+  mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 void motionUpdate()
 {
   static unsigned long motionLatchTimer = 0;         // Timer for motion sensor latch
@@ -2628,7 +2703,9 @@ void ldrUpdate()
  *  the other resistor value so that the maximum voltage at the A0 pin is 1V. The LDR decreases
  *  its resistance the more light shines on it. So the LDR will have the least resistance in a 
  *  bright room. The values of resistance for a LDR can differ so the resistor value below may need
- *  to be tweaked.
+ *  to be tweaked. Mine had values from ~ 300 Ohm with a bright flashlight directly on it to ~5k
+ *  in a typical room and about 45Kohm with my finger over it.
+ *
  *  
  *  Circuit looks like this:
  *    3.3v+ --> LDR -+--{10KΩ}-->[GND]
@@ -2637,29 +2714,40 @@ void ldrUpdate()
  *                  
  *  See: https://arduino.stackexchange.com/questions/16525/why-should-i-put-a-10k-resistor-with-an-ldr
  *  
- *  TODO: teest this circuit!
+ *  This results in sensor values around 600-700 in the same 'typical' room and values around 150-200
+ *    or so with my finger above it.
  *  
  */
 // TODO: wrap w/ IFDEF
 {
   // When did we last check and is that more than ldrUpdateInterval in the past?
-  if (millis() - ldrLastUpdateTime >= ldrUpdateInterval)
+  if ((millis() - ldrLastUpdateTime) >= ldrUpdateInterval)
   {
 
     // Now() - lastCheck is bigger than the interval so we're due for a check!
-    debugPrintln("LDR: Reading...");
     ldrValue = analogRead(A0);
+<<<<<<< HEAD
     //debugPrintln(String("LDR: value:") + String(ldrValue));
     mqttClient.publish(mqttLDRStateTopic, String(ldrValue));
+=======
+    debugPrintln(String(F("LDR: '")) + String(mqttLDRStateTopic) + String("' => ") + String(ldrValue));
 
+    // a very simple JSON document
+    String ldrConfigPayload = "{\"ldr_value\":\"" + String(ldrValue) + "\"}";
+>>>>>>> add-ldr
+
+    mqttClient.publish(mqttLDRStateTopic, ldrConfigPayload);
     // Update the lastUpdateTime
     ldrLastUpdateTime = millis();
+<<<<<<< HEAD
   }
   else
   {
     // No Update
     //debugPrintln(String(F("LDR: value:")) + String(ldrValue));
     //debugPrintln("LDR: no update, too soon!");
+=======
+>>>>>>> add-ldr
   }
 }
 
