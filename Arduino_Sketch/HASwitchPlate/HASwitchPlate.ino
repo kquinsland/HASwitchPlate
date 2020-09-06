@@ -2987,29 +2987,30 @@ void pixelParseJson(String &strPayload)
     debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'");
     return;
   }
-  // Try to get the 'b' key
-  int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
-  debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
-  FastLED.setBrightness(brightness);
-
   // Try to get the 'c' key and parse. If c is not present, check for individual pixel commands
   String cmd = pixelDocument["c"];
   debugPrintln(String("PIXELS: cmd: '") + cmd + "'");
   if (cmd == "off")
   {
+    // This is a neat trick, but not what we want to do:
     // Clear the LED strip data *and* push to the strip
-    FastLED.clear(true);
+    //FastLED.clear(true);
+    // We just want to turn the output off, not delete the color data
+    FastLED.setBrightness(0);
     return;
   }
   if (cmd == "on")
   {
-    // Restore brightness
+    // Restore brightness and push out the saved color data
     FastLED.setBrightness(brightness);
-    // Push color data out
-    FastLED.show();
     // Since we got a valid command, don't continue on to processing the 'p' obj
     return;
   }
+
+  // Try to get the 'b' key
+  int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
+  debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
+  FastLED.setBrightness(brightness);
 
   // Basic sanity check passed, pull out the 'p' object and iterate through it for RGB arrays
   JsonObject pixels = pixelDocument["p"];
