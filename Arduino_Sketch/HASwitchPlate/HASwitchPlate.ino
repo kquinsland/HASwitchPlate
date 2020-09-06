@@ -1284,10 +1284,17 @@ void espWifiSetup()
     WiFiManagerParameter custom_haspNode("haspNode", "HASP Node (required. lowercase letters, numbers, and _ only)", haspNode, 15, " maxlength=15 required pattern='[a-z0-9_]*'");
     WiFiManagerParameter custom_groupName("groupName", "Group Name (required)", groupName, 15, " maxlength=15 required");
     WiFiManagerParameter custom_mqttHeader("<br/><br/><b>MQTT Broker</b>");
-    WiFiManagerParameter custom_mqttServer("mqttServer", "MQTT Server", mqttServer, 63, " maxlength=39");
+    WiFiManagerParameter custom_mqttServer("mqttServer", "MQTT Server", mqttServer, 63, " maxlength=63");
     WiFiManagerParameter custom_mqttPort("mqttPort", "MQTT Port", mqttPort, 5, " maxlength=5 type='number'");
+<<<<<<< HEAD
     WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 128, " maxlength=128");
     WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 128, " maxlength=128 type='password'");
+=======
+
+    //                                      id        placeholder default   length cutsom-attributes
+    WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 127, " maxlength=127");
+    WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 127, " maxlength=127 type='password'");
+>>>>>>> extend-mqtt
     WiFiManagerParameter custom_configHeader("<br/><br/><b>Admin access</b>");
     WiFiManagerParameter custom_configUser("configUser", "Config User", configUser, 15, " maxlength=31'");
     WiFiManagerParameter custom_configPassword("configPassword", "Config Password", configPassword, 31, " maxlength=31 type='password'");
