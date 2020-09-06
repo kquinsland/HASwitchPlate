@@ -2867,9 +2867,6 @@ void announcePixelsToHA()
     }
   */
 
-  // Figure out the topic to use for discovery
-  char *discoTopic;
-  // "homeassistant/light/" + String(mqttClientId) + printf("/pixel/config");
   //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
 
   // See: https://arduinojson.org/v6/assistant/
@@ -2878,42 +2875,40 @@ void announcePixelsToHA()
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
     // Generate the discovery topic for *this* pixel.
-    // MAX LENGTH is 128 bytes. In testing, topic should only be ~60+ characters, but we want to
-    //  have extra room for lone mqttClientIDs
-    snprintf(discoTopic, 256, "homeassistant/light/%s/pixel%02d/config", String(mqttClientId).c_str(), i);
+    // Note: tried snprintf() byt it always crashed ;/
+    String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/pixel_" + String(i) + "/config";
 
-    // TODO: move this outside the loop or throw away?
     DynamicJsonDocument discoDoc(discoMsgSize);
 
     // Set the base topic
-    discoDoc["~"] = "homeassistant/light/$MqttID/";
+    discoDoc["~"] = "homeassistant/light/" + String(mqttClientId);
 
     // Configure name and unique ID for *this pixel*. We'll use a common device name in the device obj
-    discoDoc["name"] = "$nodeName-$PixelID";
-    discoDoc["unique_id"] = "$nodeName-$PixelID";
+    discoDoc["name"] = String(haspNode) + " Pixel " + String(i);
+    discoDoc["unique_id"] = String(haspNode) + " Pixel " + String(i);
 
     // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
     JsonObject device = discoDoc.createNestedObject("device");
-    device["name"] = "$nodeName";
-    device["model"] = "hasp1.0";
-    device["SW_version"] = "$haspVersion";
+    device["name"] = String(haspNode);
+    device["model"] = "HomeAssistantSwitchPlate";
+    device["sw_version"] = String(haspVersion);
 
     // One of the easiest ways to indicate single device is to use the MAC
     JsonArray device_connections = device.createNestedArray("connections");
     JsonArray device_connections_0 = device_connections.createNestedArray();
     device_connections_0.add("mac");
-    device_connections_0.add("02:5b:26:a8:dc:12");
+    device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX););
 
     // Tell HA how to check if we're available or not
     JsonObject availability = discoDoc.createNestedObject("availability");
-    availability["topic"] = "";
-    availability["payload_not_available"] = "";
-    availability["payload_available"] = "";
+    availability["t"] = "";
+    availability["pl_not_avail"] = "";
+    availability["pl_avail"] = "";
 
     // Tell HA how to command us
-    discoDoc["command_topic"] = "";
-    discoDoc["command_off_template"] = "";
-    discoDoc["command_on_template"] = "";
+    discoDoc["cmd_t"] = "";
+    discoDoc["cmd_off_tpl"] = "";
+    discoDoc["cmd_on_tpl"] = "";
 
     // And set brightness
     discoDoc["brightness"] = true;
