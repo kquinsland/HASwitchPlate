@@ -614,7 +614,8 @@ void mqttCallback(String &strTopic, String &strPayload)
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
 #ifdef NEOPIXEL_SUPPORT
-  else if (strTopic == mqttPixelsCommandTopic || strTopic == (mqttGroupCommandTopic + "/pixels"))
+
+  else if (strTopic == mqttPixelsBaseTopic + "/cmnd" || strTopic == (mqttGroupCommandTopic + "/pixels"))
   {
     pixelParseJson(strPayload);
   }
@@ -3002,8 +3003,15 @@ void pixelParseJson(String &strPayload)
     debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'");
     return;
   }
-  // Try to get the 'c' key and parse. If c is not present, check for individual pixel commands
+
+  // Parse our the 'c' (command) and 'b' (brightness) keys
+  /////
+  // If 'b' not present, use default BRIGHTNESS
+  // TODO: make sure between 0-255?
+  int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
+  // Pull out the command
   String cmd = pixelDocument["c"];
+
   debugPrintln(String("PIXELS: cmd: '") + cmd + "'");
   if (cmd == "off")
   {
@@ -3022,8 +3030,7 @@ void pixelParseJson(String &strPayload)
     return;
   }
 
-  // Try to get the 'b' key
-  int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
+  // If we didn't get a command, just set the brightness before setting pixels
   debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
   FastLED.setBrightness(brightness);
 
