@@ -86,25 +86,27 @@ char motionPinConfig[3] = "0";
 #define LED_TYPE WS2812B
 // A scalar for brightness. Use this to adjust brightness to account for color/thickness of plastic faceplate
 // See: http://fastled.io/docs/3.1/class_c_fast_l_e_d.html#a730ba7d967e882b4b893689cf333b2eb
-#define BRIGHTNESS 64
+#define BRIGHTNESS 32
 CRGB leds[NUM_LEDS];
 
 /*
-    Allocate room for document on the heap. The document should be quite small, At most, about 128 bytes for a payload that looks like this:
-    {
-      "v": 1,
-      "p": {
-        "1": [255, 255, 255],
-        "2": [255, 255, 255],
-        "3": [255, 255, 255],
-        "4": [255, 255, 255]
-      }
-    }
-
-  The JSON object will have 2 objects, one of the objects will be NUM_LEDS
+    We will allocate memory for the JSON document dynamically as we get MQTT messages.
+    We can calculate the number of bytes needed now, though, as that will be static.
+    The payload will look like this:
+        {
+          "v": 1,
+          "p": {
+            "1": [255, 255, 255],
+            "2": [255, 255, 255],
+            "3": [255, 255, 255],
+            "4": [255, 255, 255]
+          },
+          "b": 128
+        }
+    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 12 bytes for misc characters!
+    See: https://arduinojson.org/v6/assistant/
 */
-// See: https://arduinojson.org/v6/assistant/
-const int pixelJsonBufferSize = JSON_OBJECT_SIZE(2) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3));
+const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 12;
 
 const float haspVersion = 0.40;                     // Current HASP software release version
 byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the pael
@@ -554,13 +556,6 @@ void mqttCallback(String &strTopic, String &strPayload)
   // '[...]/device/command/p[1].b[4].txt' -m '' = nextionGetAttr("p[1].b[4].txt")
   // '[...]/device/command/p[1].b[4].txt' -m '"Lights On"' = nextionSetAttr("p[1].b[4].txt", "\"Lights On\"")
   /////
-  // We'll need a new topic for the light bar. Ideally, one topic takes a payload that describes the
-  //    state of each pixel. As of *right now* there are 4 pixels, but the code *should* work off of NUM_LEDS
-  // I think the easiest way to do this is by using the JSON functions that are already present
-  //
-  // '[...]/device/command/pixel' -m '{"1": [100, 200, 255],"2": [255, 0, 0],"3": [0, 255, 0],"4": [0, 0, 255]}'
-  //    sets pixel 1 to a TEAL like color and the next three pixels to RED, GREEN, BLUE respectively.
-
   debugPrintln(String(F("MQTT IN: '")) + strTopic + "' : '" + strPayload + "'");
 
   if (((strTopic == mqttCommandTopic) || (strTopic == mqttGroupCommandTopic)) && (strPayload == ""))
@@ -2657,7 +2652,6 @@ void pixelSetup()
 /*
  *  Set up the FastLED library
  *  See: https://github.com/FastLED/FastLED/wiki/Overview#platforms
- *
  */
 // TODO: wrap w/ IFDEF
 {
@@ -2666,6 +2660,17 @@ void pixelSetup()
   // Use 'standard' color correction/gama curves
   FastLED.setCorrection(TypicalLEDStrip);
   FastLED.setBrightness(BRIGHTNESS);
+
+  // Simple animation to show that we're alive / setup
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  {
+    leds[i] = CRGB(32, 128, 32);
+    // Fade brightness in
+    FastLED.setBrightness(BRIGHTNESS * (i + 1 / NUM_LEDS));
+    FastLED.show();
+    delay(100);
+  }
+  delay(200);
   FastLED.clear();
 }
 
@@ -2685,13 +2690,14 @@ void pixelParseJson(String &strPayload)
         "2": [255, 255, 255],
         "3": [255, 255, 255],
         "4": [255, 255, 255]
-      }
+      },
+      "b":128
     }
   */
-  DynamicJsonDocument pixelDocument(2 * pixelJsonBufferSize);
+  DynamicJsonDocument pixelDocument(pixelJsonBufferSize);
 
   // print out the number of bytes to get a rough idea of sizes
-  debugPrintln(String("PIXELS: needed " + String(strPayload.length()) + " bytes, allocated: " + String(pixelDocument.capacity())));
+  debugPrintln(String("PIXELS: needed " + String(strPayload.length()) + " bytes, allocated: " + String(pixelJsonBufferSize)));
 
   // string -> JSON
   DeserializationError jsonError = deserializeJson(pixelDocument, strPayload);
@@ -2709,6 +2715,10 @@ void pixelParseJson(String &strPayload)
     debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(hasVersion.as<int>() + "'"));
     return;
   }
+  // Try to get the 'b' key and present,
+  int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
+  debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
+  FastLED.setBrightness(brightness);
 
   // Basic sanity check passed, pull out the 'p' object and iterate through it for RGB arrays
   JsonObject pixels = pixelDocument["p"];
@@ -2719,7 +2729,6 @@ void pixelParseJson(String &strPayload)
   }
 
   debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
-
   for (uint8_t i = 0; i < pixels.size(); i++)
   {
     debugPrintln(String("PIXEL: State num: ") + String(i));
