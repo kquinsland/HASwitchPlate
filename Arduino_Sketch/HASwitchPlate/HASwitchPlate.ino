@@ -514,6 +514,12 @@ void mqttConnect()
       {
         debugPrintln(String(F("MQTT: subscribed to ")) + mqttStatusTopic);
       }
+#ifdef NEOPIXEL_SUPPORT
+      if (mqttClient.subscribe(mqttPixelsCommandTopic))
+      {
+        debugPrintln(String(F("MQTT: subscribed to ")) + mqttPixelsCommandTopic);
+      }
+#endif
 
       if (mqttFirstConnect)
       { // Force any subscribed clients to toggle OFF/ON when we first connect to
