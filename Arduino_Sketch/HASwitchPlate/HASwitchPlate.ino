@@ -176,9 +176,6 @@ String mqttLightBrightStateTopic;                   // MQTT topic for outgoing p
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
 #ifdef LDR_SUPPORT
-#endif
-
-#ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
 String mqttLDRDiscoveryTopic;            // MQTT topic for home-assistant auto discovery
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
@@ -187,7 +184,8 @@ float ldrValue = 0;                      // The value from LDR
 #endif
 
 #ifdef NEOPIXEL_SUPPORT
-String mqttLightBarState; // MQTT topic for the NeoPixel strip
+String mqttPixelsCommandTopic; // MQTT topic for commanding pixels
+String mqttPixelsStateTopic;   // MQTT topic for state of all pixels
 #endif
 
 String nextionModel;                             // Record reported model number of LCD panel
@@ -461,6 +459,11 @@ void mqttConnect()
   mqttLightBrightStateTopic = "hasp/" + String(haspNode) + "/brightness/state";
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
+#ifdef NEOPIXEL_SUPPORT
+  mqttPixelsCommandTopic = "hasp/" + String(mqttClientId) + "/pixels/cmnd";
+  mqttPixelsStateTopic = "hasp/" + String(mqttClientId) + "/pixels/state";
+#endif
+
 #ifdef LDR_SUPPORT
   mqttLDRStateTopic = "hasp/" + String(mqttClientId) + "/ldr/state";
 #endif
@@ -604,7 +607,7 @@ void mqttCallback(String &strTopic, String &strPayload)
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
 #ifdef NEOPIXEL_SUPPORT
-  else if (strTopic == (mqttCommandTopic + "/pixels") || strTopic == (mqttGroupCommandTopic + "/pixels"))
+  else if (strTopic == mqttPixelsCommandTopic || strTopic == (mqttGroupCommandTopic + "/pixels"))
   {
     pixelParseJson(strPayload);
   }
@@ -2656,7 +2659,16 @@ void ldrSetup()
   * users the trouble of having to further customize the sensor in HA, we claim to be of class 'illuminance'
   * 
   * The JSON that we send to HA should look like this:
-  *     //TODO
+      {
+          "name": "$haspNode",
+          "unique_id":"$mqttClientId",
+          "state_topic":"$mqttLDRStateTopic",
+          "device_class" "illuminance",
+          "unit_of_measurement": "volts",
+          "value_template": "{{ value_json.ldr_value}}"
+      }
+    // TODO: move to ArduinoJSON 
+    // TODO: compact keys
   */
 
   //mqttStateTopic = "hasp/" + String(haspNode) + "/state";
@@ -2855,6 +2867,9 @@ void announcePixelsToHA()
     }
   */
 
+  // Figure out the topic to use for discovery
+  char *discoTopic;
+  // "homeassistant/light/" + String(mqttClientId) + printf("/pixel/config");
   //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
 
   // See: https://arduinojson.org/v6/assistant/
@@ -2862,6 +2877,11 @@ void announcePixelsToHA()
 
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
+    // Generate the discovery topic for *this* pixel.
+    // MAX LENGTH is 128 bytes. In testing, topic should only be ~60+ characters, but we want to
+    //  have extra room for lone mqttClientIDs
+    snprintf(discoTopic, 256, "homeassistant/light/%s/pixel%02d/config", String(mqttClientId).c_str(), i);
+
     // TODO: move this outside the loop or throw away?
     DynamicJsonDocument discoDoc(discoMsgSize);
 
@@ -2911,11 +2931,15 @@ void announcePixelsToHA()
     //discoDoc["schema"] = "json";
     char output[1024];
     serializeJson(discoDoc, output);
-    //debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
+    debugPrintln(String(F("PIXEL: DISCOVERY TOPIC: '")) + String(discoTopic));
     debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
     // For now, just need one run!
     return;
   }
+
+  // String mqttPixelsCommandTopic;   // MQTT topic for commanding pixels
+  // String mqttPixelsStateTopic;     // MQTT topic for state of all pixels
+  // String mqttPixelsDiscoveryTopic; // MQTT topic for home-assistant auto discovery
 
   //mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
