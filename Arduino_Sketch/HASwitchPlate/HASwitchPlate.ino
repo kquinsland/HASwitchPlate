@@ -105,7 +105,7 @@ CRGB leds[NUM_LEDS];
           },
           "b": 128
         }
-    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 14 bytes for misc characters!
+    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 14 bytes for duplicate / misc characters!
     See: https://arduinojson.org/v6/assistant/
 */
 const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 14;
@@ -2689,125 +2689,135 @@ void pixelSetup()
 void announcePixelsToHA()
 {
   /*
-  Take this oppertunity to announce to home assistant that we have a LDR
-  This works because HomeAssistant supports MQTT based auto-discovery
+  Home assistant supports 'automatic' configuration via MQTT. A device needs to submit a JSON document w/
+    details on where the device will look for commands / where HA should look for device state and how to
+    encode/decipher commands/state.
+
   See: https://www.home-assistant.io/docs/mqtt/discovery/
 
+
+  The config payload is ... a bit more complex, especially for RGB lights as color temp / and RGB color make
+    thing significantly more complex compares to 'on' and 'off'. Additionally, we'll need to send this autoconfig
+    document *per pixel* to give HA the ability to control each LED individually. This complicates things, but
+    ultimately makes for a more powerful/useful mod to the HASP. A scene / group of lights can be made in HA to
+    paper over this and make the pixel bar behave as one light.
+
+  FastLED does support a variety of effects, but I'll omit them for now. If there's room in the code and
+    enough left over CPU to spare, they may be worth adding.
+    
   MQTT topic that we write the config document to must be in this format:
-  <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
+    <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
 
-
-  The payload that HA supports for a light is ... complex.... especially when the light supports RGB and color temp
-  I also have no desire to cobble together a configuration JSON payload PER pixel...
-
-  So i will most certainly use ArduinoJSON to compose the discovery JSON. This way, i can make it dynamic based on the 
-  number of LEDs that the user has configured and the user can change the color PER pixel (or use a group/scene to set them all @ once)
-
-
-Note: ~ is the base topic
-
-
-<discovery_prefix>/light/[<node_id>/]<object_id>/config
-
-{
-  "~": "homeassistant/light/kitchen",
-  "name": "Kitchen",
-  "unique_id": "kitchen_light",
-  "cmd_t": "~/set",
-  "stat_t": "~/state",
-  "schema": "json",
-  "brightness": true
-
- 
-The MQTT topic to publish commands to change the switch state.
-
-
+  Because we want to express multiple objects on one node, we'll use a pattern that looks like this:
+    <discovery_prefix>/light/$HASP-ID/$pixel_number/config
   
-
-Defines a template to extract the brightn
-
-
+  The payload will look something like this:
+    Note: ~ is the base topic
 
 
-The MQTT topic subscribed to receive brightness state updates.
-brightness_value_templatestring(Optional)
+    {
+      "~": "homeassistant/light/$MqttID/",
+      "name": "$nodeName-$PixelID",
 
-Defines a template to extract the brightness value.
+      "unique_id": "$nodeName-$PixelID",
+      "device": {
+        "name": "$nodeName",
+        "model": "hasp1.0",
+        "SW_version": "$haspVersion",
+        "connections": [
+          ["mac", "02:5b:26:a8:dc:12"]
+        ]
+      },
 
+      "availability": {
+        "topic": "",
+        "payload_not_available": "",
+        "payload_available": ""
+      },
 
+      "command_topic": "",
+      "command_off_template": "",
+      "command_on_template": "",
 
-}
+      "brightness_command_topic": "",
+      "brightness_template": "",
 
+      "brightness_state_topic": "",
+      "brightness_value_template": "",
+
+      "brightness_scale": "FastLED.getBrightness()", 
+      "brightness": "true",
+
+      "rgb_command_topic": "",
+      "rgb_command_template": "",
+      "rgb_state_topic": ""
+
+    }
+    // TODO: minify the keys to save space!!!!
+    See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
   */
 
   //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
 
-  // We'll need to produce one payload per pixel
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = JSON_OBJECT_SIZE(7);
+  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(17) + 511;
+
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
-    // TODO: Abbreviate all topics (if we need)
+    // TODO: move this outside the loop or throw away?
     DynamicJsonDocument discoDoc(discoMsgSize);
 
     // Set the base topic
-    discoDoc["~"] = "homeassistant/light/hasp01-1234589/pixel1/config";
+    discoDoc["~"] = "homeassistant/light/$MqttID/";
 
-    // Configure availability
-    JsonObject availability = doc.createNestedObject("availability");
-    availability["topic"] = "//TODO: the 'base' state task";
-    availability["payload_not_available"] = "//TODO: scrape the default payload and look for a string";
-    availability["payload_available"] = "//TODO: scrape the default payload and look for a string";
+    // Configure name and unique ID for *this pixel*. We'll use a common device name in the device obj
+    discoDoc["name"] = "$nodeName-$PixelID";
+    discoDoc["unique_id"] = "$nodeName-$PixelID";
 
-    //// Configure brightness
-    // Tell HA how to configure brightness
-    discoDoc["brightness_command_topic"] = "//TODO: implement this (it's the same topic as color, just a different payload";
+    // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
+    JsonObject device = discoDoc.createNestedObject("device");
+    device["name"] = "$nodeName";
+    device["model"] = "hasp1.0";
+    device["SW_version"] = "$haspVersion";
 
-    // FastLED supports brightness scaling from 0 to 255
-    discoDoc["brightness_scale"] = 255;
+    // One of the easiest ways to indicate single device is to use the MAC
+    JsonArray device_connections = device.createNestedArray("connections");
+    JsonArray device_connections_0 = device_connections.createNestedArray();
+    device_connections_0.add("mac");
+    device_connections_0.add("02:5b:26:a8:dc:12");
 
-    // Tell HA where we publish changes to brightness
-    discoDoc["brightness_state_topic"] = "//TODO: implement this";
-    discoDoc["brightness_value_template"] = "//TODO: make jinja template to pull brightness out of state template";
+    // Tell HA how to check if we're available or not
+    JsonObject availability = discoDoc.createNestedObject("availability");
+    availability["topic"] = "";
+    availability["payload_not_available"] = "";
+    availability["payload_available"] = "";
 
-    // Tell HA where to send directions to
-    // TODO: make this dynamic
-    discoDoc["command_topic"] = "hasp/plate01/command/pixels";
-    discoDoc["name"] = String(haspNode) + "-" String() + "Pixel X";
-    discoDoc["unique_id"] = "hasp01-pixel01";
+    // Tell HA how to command us
+    discoDoc["command_topic"] = "";
+    discoDoc["command_off_template"] = "";
+    discoDoc["command_on_template"] = "";
 
-    // Tell HA how to turn us on/off
-    // TODO: It might be a good idea implement a dedicated topic sub for this?
-    discoDoc["payload_off"] = "";
-    discoDoc["payload_on"] = "";
+    // And set brightness
+    discoDoc["brightness"] = true;
+    discoDoc["brightness_command_topic"] = "";
+    discoDoc["brightness_template"] = "";
+    discoDoc["brightness_state_topic"] = "";
+    discoDoc["brightness_value_template"] = "";
+    discoDoc["brightness_scale"] = "FastLED.getBrightness()";
 
+    // Set the color
     discoDoc["rgb_command_template"] = "";
     discoDoc["rgb_command_topics"] = "";
 
-    doc["cmd_t"] = "~/set";
-    doc["stat_t"] = "~/state";
-    doc["schema"] = "json";
-    doc["brightness"] = true;
+    // Needed?!
+    //discoDoc["schema"] = "json";
+    char output[1024];
+    serializeJson(discoDoc, output);
+    //debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
+    debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
+    // For now, just need one run!
+    return;
   }
-
-  serializeJson(doc, Serial);
-
-  JsonObject &root = staticJsonBuffer.createObject();
-  root["name"] = FRIENDLY_NAME;
-  root["platform"] = "mqtt_json";
-  root["state_topic"] = MQTT_STATE_TOPIC;
-  root["command_topic"] = MQTT_COMMAND_TOPIC;
-  root["brightness"] = true;
-  root["rgb"] = true;
-  root["white_value"] = true;
-  root["color_temp"] = true;
-  root["effect"] = true;
-  root["effect_list"] = EFFECT_LIST;
-  root.printTo(jsonBuffer, sizeof(jsonBuffer));
-  publishToMQTT(MQTT_CONFIG_TOPIC, jsonBuffer);
-
-  debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
-  debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(ldrConfigPayload));
 
   //mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
@@ -2850,7 +2860,7 @@ void pixelParseJson(String &strPayload)
   int payloadVersion = pixelDocument["v"].as<int>();
   if (payloadVersion != 1)
   {
-    debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'"));
+    debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'");
     return;
   }
   // Try to get the 'b' key and present,
