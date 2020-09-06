@@ -462,6 +462,7 @@ void mqttConnect()
 
 #ifdef NEOPIXEL_SUPPORT
   mqttPixelsBaseTopic = "hasp/" + String(mqttClientId) + "/pixels";
+  mqttPixelsStateTopic = mqttPixelsBaseTopic + "/state";
 #endif
 
 #ifdef LDR_SUPPORT
@@ -2921,8 +2922,7 @@ void announcePixelsToHA()
     discoDoc["cmd_on_tpl"] = "{\"v\":1,\"c\":\"on\"}";
 
     // We will publish the state of ALL pixels in one location
-    // TODO: Implement this
-    discoDoc["state_topic"] = "~/state";
+    discoDoc["state_topic"] = mqttPixelsStateTopic;
 
     // Tell HA how to get the on/off state for each pixel
     discoDoc["state_value_template"] = "//TODO: make a template for this";
@@ -2936,7 +2936,7 @@ void announcePixelsToHA()
     // Tell HA how to parse the brightness out of the state payload
     discoDoc["brightness_template"] = "//TODO: make a template";
 
-    // FastLED will reutn an int
+    // FastLED will reuturn an int
     discoDoc["brightness_scale"] = String(FastLED.getBrightness());
 
     // Set the color
@@ -2947,11 +2947,13 @@ void announcePixelsToHA()
 
     // Needed?!
     //discoDoc["schema"] = "json";
+    // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
     char output[1024];
     serializeJson(discoDoc, output);
     debugPrintln(String(F("PIXEL: DISCOVERY TOPIC: '")) + String(discoTopic));
     debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
     // For now, just need one run!
+    //TODO: remove/replace w/ call to MQTT publish!
     return;
   }
 
@@ -2974,10 +2976,10 @@ void pixelParseJson(String &strPayload)
     {
       "v": 1,
       "p": {
+        "0": [255, 255, 255],
         "1": [255, 255, 255],
         "2": [255, 255, 255],
-        "3": [255, 255, 255],
-        "4": [255, 255, 255]
+        "3": [255, 255, 255]
       },
       "b":128
     }
@@ -3020,6 +3022,7 @@ void pixelParseJson(String &strPayload)
     //FastLED.clear(true);
     // We just want to turn the output off, not delete the color data
     FastLED.setBrightness(0);
+    updatePixelState();
     return;
   }
   if (cmd == "on")
@@ -3027,6 +3030,7 @@ void pixelParseJson(String &strPayload)
     // Restore brightness and push out the saved color data
     FastLED.setBrightness(brightness);
     // Since we got a valid command, don't continue on to processing the 'p' obj
+    updatePixelState();
     return;
   }
 
@@ -3041,31 +3045,89 @@ void pixelParseJson(String &strPayload)
     debugPrintln(String("PIXELS: [ERROR] Unable to parse Pixels."));
     return;
   }
-
-  debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
-  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  else
   {
-    debugPrintln(String("PIXEL: State num: ") + String(i));
-    JsonArray pixel_data = pixels[String(i)];
-
-    // If the user didn't send any data for this pixel, just move on
-    if (!pixel_data)
+    debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
+    for (uint8_t i = 0; i < NUM_LEDS; i++)
     {
-      debugPrintln(String("NULL AT ") + String(i));
-      continue;
-    }
+      debugPrintln(String("PIXEL: State num: ") + String(i));
+      JsonArray pixel_data = pixels[String(i)];
 
-    int r;
-    int g;
-    int b;
-    r = pixel_data[0];
-    g = pixel_data[1];
-    b = pixel_data[2];
-    leds[i] = CRGB(r, g, b);
-    debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
+      // If the user didn't send any data for this pixel, just move on
+      if (!pixel_data)
+      {
+        debugPrintln(String("NULL AT ") + String(i));
+        continue;
+      }
+
+      int r;
+      int g;
+      int b;
+      r = pixel_data[0];
+      g = pixel_data[1];
+      b = pixel_data[2];
+      leds[i] = CRGB(r, g, b);
+      debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
+    }
   }
   debugPrintln(String("Calling pixelUpdate..."));
   pixelUpdate();
+  updatePixelState();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void updatePixelState()
+{
+  /*
+    Small function to write the state of all LEDs out to MQTT. THe status is pretty similar to the 'full'
+      command payload. It looks like this:
+
+        {
+          "b": 30,
+          "s": "off",
+          "p": {
+            "0": [0, 0, 64],
+            "1": [0, 0, 64],
+            "2": [10, 0, 0],
+            "3": [0, 0, 32]
+          }
+        }
+  */
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t statusMsgSize = 4 * JSON_ARRAY_SIZE(3) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + 18;
+  DynamicJsonDocument pixelState(statusMsgSize);
+
+  int bright = FastLED.getBrightness();
+  pixelState["b"] = String(bright);
+
+  // Encode all the pixels. While we loop through all pixels, check their RGB status so we can determine the on/off state
+  JsonObject p = pixelState.createNestedObject("p");
+  int numPixelsOff = 0;
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  {
+    JsonArray pixArr = p.createNestedArray(String(i));
+    // R, G, B for pixel #i
+    pixArr.add(leds[i][0]);
+    pixArr.add(leds[i][1]);
+    pixArr.add(leds[i][2]);
+
+    // This pixel is off
+    if (leds[i][0] == 0 && leds[i][1] == 0 && leds[i][2] == 0)
+    {
+      numPixelsOff += 1;
+    }
+  }
+
+  // Indicate that the pixels are off if al NUM_LEDS are off or the total system brightness is 0
+  pixelState["s"] = (numPixelsOff == NUM_LEDS || bright == 0) ? String("off") : String("on");
+
+  debugPrintln(String(F("PIXEL: STATE TOPIC: '")) + String(mqttPixelsStateTopic));
+  // Not 100% sure why i can't allocate the char buffer dynamically based on pixelState.memoryUsage();... refuses to compile :/
+  char output[512];
+  serializeJson(pixelState, output);
+  debugPrintln(String(F("PIXEL: STATE TOPIC: '")) + String(mqttPixelsStateTopic));
+  debugPrintln(String(F("PIXEL: STATE PAYLOAD: '")) + String(output));
+  //mqttClient.publish(mqttPixelsStateTopic, String(pixelState));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3073,6 +3135,7 @@ void pixelUpdate()
 {
   FastLED.show();
 }
+
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
