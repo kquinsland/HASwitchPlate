@@ -69,8 +69,10 @@ char motionPinConfig[3] = "0";
 #include <EEPROM.h>
 #include <SoftwareSerial.h>
 
-//TODO: surround w/ IFDEF
+// Set this to 1 to enable neopixel support
+#define NEOPIXEL_SUPPORT 1
 
+#ifdef NEOPIXEL_SUPPORT
 // Tell FASTLED to use raw pin order. MUST be defined *before* library is included!
 #define FASTLED_ESP8266_RAW_PIN_ORDER
 #include "FastLED.h"
@@ -107,6 +109,7 @@ CRGB leds[NUM_LEDS];
     See: https://arduinojson.org/v6/assistant/
 */
 const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 12;
+#endif
 
 const float haspVersion = 0.40;                     // Current HASP software release version
 byte nextionReturnBuffer[128];                      // Byte array to pass around data coming from the pael
@@ -175,7 +178,9 @@ unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR upda
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
 float ldrValue;
 
+#ifdef NEOPIXEL_SUPPORT
 String mqttLightBarState; // MQTT topic for the NeoPixel strip
+#endif
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -275,8 +280,9 @@ void setup()
 
   motionSetup(); // Setup motion sensor if configured
 
-  //TODO: Wrap in IFDEF
+#ifdef NEOPIXEL_SUPPORT
   pixelSetup();
+#endif
 
   if (beepEnabled)
   { // Setup beep/tactile if configured
@@ -368,8 +374,9 @@ void loop()
   // TODO: surround w/ IFDEF
   ldrUpdate();
 
-  //TODO: surround w/ IFDEF
+#ifdef NEOPIXEL_SUPPORT
   pixelUpdate();
+#endif
 
   if (debugTelnetEnabled)
   {
@@ -578,10 +585,12 @@ void mqttCallback(String &strTopic, String &strPayload)
   {                               // '[...]/device/command/json' -m '["dim=5", "page 1"]' = nextionSendCmd("dim=50"), nextionSendCmd("page 1")
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
+#ifdef NEOPIXEL_SUPPORT
   else if (strTopic == (mqttCommandTopic + "/pixels") || strTopic == (mqttGroupCommandTopic + "/pixels"))
   {
     pixelParseJson(strPayload);
   }
+#endif
   else if (strTopic == (mqttCommandTopic + "/statusupdate") || strTopic == (mqttGroupCommandTopic + "/statusupdate"))
   {                     // '[...]/device/command/statusupdate' == mqttStatusUpdate()
     mqttStatusUpdate(); // return status JSON via MQTT
@@ -2648,12 +2657,12 @@ void ldrUpdate()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef NEOPIXEL_SUPPORT
 void pixelSetup()
 /*
- *  Set up the FastLED library
+ *  Set up the FastLED library for the strip of pixels embedded below the LCD
  *  See: https://github.com/FastLED/FastLED/wiki/Overview#platforms
  */
-// TODO: wrap w/ IFDEF
 {
   debugPrintln("PIXEL: Setting up...");
   FastLED.addLeds<LED_TYPE, LED_DATA_PIN, LED_COLOR_ORDER>(leds, NUM_LEDS);
@@ -2754,6 +2763,7 @@ void pixelUpdate()
   //debugPrintln(String("pixelUpdate alive!"));
   FastLED.show();
 }
+#endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void handleTelnetClient()
