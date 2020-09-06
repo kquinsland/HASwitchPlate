@@ -100,18 +100,19 @@ CRGB leds[NUM_LEDS];
     The payload will look like this:
         {
           "v": 1,
+          "b": 128,
+          "c": "off",
           "p": {
             "1": [255, 255, 255],
             "2": [255, 255, 255],
             "3": [255, 255, 255],
             "4": [255, 255, 255]
-          },
-          "b": 128
+          }
         }
     the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 14 bytes for duplicate / misc characters!
     See: https://arduinojson.org/v6/assistant/
 */
-const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 14;
+const int pixelJsonBufferSize = 2 * JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 20;
 #endif
 
 const float haspVersion = 0.40;                     // Current HASP software release version
@@ -2980,10 +2981,29 @@ void pixelParseJson(String &strPayload)
     debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'");
     return;
   }
-  // Try to get the 'b' key and present,
+  // Try to get the 'b' key
   int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
   debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
   FastLED.setBrightness(brightness);
+
+  // Try to get the 'c' key and parse. If c is not present, check for individual pixel commands
+  String cmd = pixelDocument["c"];
+  debugPrintln(String("PIXELS: cmd: '") + cmd + "'");
+  if (cmd == "off")
+  {
+    // Clear the LED strip data *and* push to the strip
+    FastLED.clear(true);
+    return;
+  }
+  if (cmd == "on")
+  {
+    // Restore brightness
+    FastLED.setBrightness(brightness);
+    // Push color data out
+    FastLED.show();
+    // Since we got a valid command, don't continue on to processing the 'p' obj
+    return;
+  }
 
   // Basic sanity check passed, pull out the 'p' object and iterate through it for RGB arrays
   JsonObject pixels = pixelDocument["p"];
