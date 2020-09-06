@@ -105,10 +105,10 @@ CRGB leds[NUM_LEDS];
           },
           "b": 128
         }
-    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 12 bytes for misc characters!
+    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 14 bytes for misc characters!
     See: https://arduinojson.org/v6/assistant/
 */
-const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 12;
+const int pixelJsonBufferSize = JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 14;
 #endif
 
 const float haspVersion = 0.40;                     // Current HASP software release version
@@ -2738,10 +2738,17 @@ void pixelParseJson(String &strPayload)
   }
 
   debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
-  for (uint8_t i = 0; i < pixels.size(); i++)
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
     debugPrintln(String("PIXEL: State num: ") + String(i));
     JsonArray pixel_data = pixels[String(i)];
+
+    // If the user didn't send any data for this pixel, just move on
+    if (!pixel_data)
+    {
+      debugPrintln(String("NULL AT ") + String(i));
+      continue;
+    }
 
     int r;
     int g;
@@ -2750,7 +2757,7 @@ void pixelParseJson(String &strPayload)
     g = pixel_data[1];
     b = pixel_data[2];
     leds[i] = CRGB(r, g, b);
-    debugPrintln(String("Pixel ") + String(i) + " will be r:" + String(r) + " g:" + String(g) + " b:" + String(leds[i]));
+    debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
   }
   debugPrintln(String("Calling pixelUpdate..."));
   pixelUpdate();
