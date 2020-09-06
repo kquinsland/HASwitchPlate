@@ -2950,18 +2950,11 @@ void announcePixelsToHA()
     // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
     char output[1024];
     serializeJson(discoDoc, output);
-    debugPrintln(String(F("PIXEL: DISCOVERY TOPIC: '")) + String(discoTopic));
+    debugPrintln(String(F("PIXEL: DISCOVERY TOPIC: '")) + discoTopic);
     debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
-    // For now, just need one run!
-    //TODO: remove/replace w/ call to MQTT publish!
-    return;
+
+    mqttClient.publish(discoTopic, output);
   }
-
-  // String mqttPixelsCommandTopic;   // MQTT topic for commanding pixels
-  // String mqttPixelsStateTopic;     // MQTT topic for state of all pixels
-  // String mqttPixelsDiscoveryTopic; // MQTT topic for home-assistant auto discovery
-
-  //mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3043,7 +3036,6 @@ void pixelParseJson(String &strPayload)
   if (pixels.isNull())
   {
     debugPrintln(String("PIXELS: [ERROR] Unable to parse Pixels."));
-    return;
   }
   else
   {
@@ -3070,7 +3062,6 @@ void pixelParseJson(String &strPayload)
       debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
     }
   }
-  debugPrintln(String("Calling pixelUpdate..."));
   pixelUpdate();
   updatePixelState();
 }
@@ -3121,13 +3112,12 @@ void updatePixelState()
   // Indicate that the pixels are off if al NUM_LEDS are off or the total system brightness is 0
   pixelState["s"] = (numPixelsOff == NUM_LEDS || bright == 0) ? String("off") : String("on");
 
-  debugPrintln(String(F("PIXEL: STATE TOPIC: '")) + String(mqttPixelsStateTopic));
   // Not 100% sure why i can't allocate the char buffer dynamically based on pixelState.memoryUsage();... refuses to compile :/
   char output[512];
   serializeJson(pixelState, output);
   debugPrintln(String(F("PIXEL: STATE TOPIC: '")) + String(mqttPixelsStateTopic));
   debugPrintln(String(F("PIXEL: STATE PAYLOAD: '")) + String(output));
-  //mqttClient.publish(mqttPixelsStateTopic, String(pixelState));
+  mqttClient.publish(mqttPixelsStateTopic, output);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3135,7 +3125,6 @@ void pixelUpdate()
 {
   FastLED.show();
 }
-
 #endif
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
