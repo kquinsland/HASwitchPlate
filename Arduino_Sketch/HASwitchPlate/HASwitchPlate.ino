@@ -185,8 +185,8 @@ float ldrValue = 0;                      // The value from LDR
 #endif
 
 #ifdef NEOPIXEL_SUPPORT
-String mqttPixelsCommandTopic; // MQTT topic for commanding pixels
-String mqttPixelsStateTopic;   // MQTT topic for state of all pixels
+String mqttPixelsBaseTopic;  // base string to use for all generating all MQTT topics dealing w/ pixels
+String mqttPixelsStateTopic; // MQTT topic for state of all pixels
 #endif
 
 String nextionModel;                             // Record reported model number of LCD panel
@@ -461,8 +461,7 @@ void mqttConnect()
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
 #ifdef NEOPIXEL_SUPPORT
-  mqttPixelsCommandTopic = "hasp/" + String(mqttClientId) + "/pixels/cmnd";
-  mqttPixelsStateTopic = "hasp/" + String(mqttClientId) + "/pixels/state";
+  mqttPixelsBaseTopic = "hasp/" + String(mqttClientId) + "/pixels";
 #endif
 
 #ifdef LDR_SUPPORT
@@ -515,9 +514,10 @@ void mqttConnect()
         debugPrintln(String(F("MQTT: subscribed to ")) + mqttStatusTopic);
       }
 #ifdef NEOPIXEL_SUPPORT
-      if (mqttClient.subscribe(mqttPixelsCommandTopic))
+      // Subscribe to command topic
+      if (mqttClient.subscribe(String(mqttPixelsBaseTopic + "/cmnd")))
       {
-        debugPrintln(String(F("MQTT: subscribed to ")) + mqttPixelsCommandTopic);
+        debugPrintln(String(F("MQTT: subscribed to ")) + mqttPixelsBaseTopic + F("/cmnd"));
       }
 #endif
 
@@ -2874,8 +2874,6 @@ void announcePixelsToHA()
     }
   */
 
-  //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
-
   // See: https://arduinojson.org/v6/assistant/
   const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(18) + 379;
 
@@ -2888,7 +2886,7 @@ void announcePixelsToHA()
     DynamicJsonDocument discoDoc(discoMsgSize);
 
     // Set the base topic
-    discoDoc["~"] = "homeassistant/light/" + String(mqttClientId);
+    discoDoc["~"] = mqttPixelsBaseTopic;
 
     // Configure name and unique ID for *this pixel*. We'll use a common device name in the device obj
     discoDoc["name"] = String(haspNode) + " Pixel " + String(i);
@@ -2897,37 +2895,54 @@ void announcePixelsToHA()
     // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
     JsonObject device = discoDoc.createNestedObject("device");
     device["name"] = String(haspNode);
-    device["model"] = "HomeAssistantSwitchPlate";
+    device["model"] = "HASwitchPlate";
     device["sw_version"] = String(haspVersion);
 
     // One of the easiest ways to indicate single device is to use the MAC
     JsonArray device_connections = device.createNestedArray("connections");
     JsonArray device_connections_0 = device_connections.createNestedArray();
     device_connections_0.add("mac");
-    device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX););
+    device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
 
     // Tell HA how to check if we're available or not
     JsonObject availability = discoDoc.createNestedObject("availability");
-    availability["t"] = "";
-    availability["pl_not_avail"] = "";
-    availability["pl_avail"] = "";
+    // We use the 'status' topic as it's already set w/ on/off as needed
+    //TODO: is retention on this going ot be an issue?
+    //TODO: If i want the LEDs to operate independent of the screen, this is a poor choice of topics?
+    availability["t"] = mqttStatusTopic;
+    availability["pl_not_avail"] = "OFF";
+    availability["pl_avail"] = "ON";
 
     // Tell HA how to command us
-    discoDoc["cmd_t"] = "";
-    discoDoc["cmd_off_tpl"] = "";
-    discoDoc["cmd_on_tpl"] = "";
+    discoDoc["cmd_t"] = "~/cmnd";
+    // Send a simple c = off to command off
+    discoDoc["cmd_off_tpl"] = "{\"v\":1,\"c\":\"off\"}";
+    discoDoc["cmd_on_tpl"] = "{\"v\":1,\"c\":\"on\"}";
+
+    // We will publish the state of ALL pixels in one location
+    // TODO: Implement this
+    discoDoc["state_topic"] = "~/state";
+
+    // Tell HA how to get the on/off state for each pixel
+    discoDoc["state_value_template"] = "//TODO: make a template for this";
 
     // And set brightness
     discoDoc["brightness"] = true;
-    discoDoc["brightness_command_topic"] = "";
-    discoDoc["brightness_template"] = "";
-    discoDoc["brightness_state_topic"] = "";
-    discoDoc["brightness_value_template"] = "";
-    discoDoc["brightness_scale"] = "FastLED.getBrightness()";
+
+    // Send brightness commands to the cmnd topic
+    discoDoc["brightness_command_topic"] = "~/cmnd";
+
+    // Tell HA how to parse the brightness out of the state payload
+    discoDoc["brightness_template"] = "//TODO: make a template";
+
+    // FastLED will reutn an int
+    discoDoc["brightness_scale"] = String(FastLED.getBrightness());
 
     // Set the color
-    discoDoc["rgb_command_template"] = "";
-    discoDoc["rgb_command_topics"] = "";
+    // Send all RGB color change commands to the cmnd topic
+    discoDoc["rgb_command_topic"] = "~/cmnd";
+
+    discoDoc["rgb_command_template"] = "//TODO: make a template";
 
     // Needed?!
     //discoDoc["schema"] = "json";
