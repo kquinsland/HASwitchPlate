@@ -69,6 +69,9 @@ char motionPinConfig[3] = "0";
 #include <EEPROM.h>
 #include <SoftwareSerial.h>
 
+// Set this to 1 to enable LDR support
+#define LDR_SUPPORT 1
+
 // Set this to 1 to enable neopixel support
 #define NEOPIXEL_SUPPORT 1
 
@@ -172,23 +175,20 @@ String mqttLightBrightCommandTopic;                 // MQTT topic for incoming p
 String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
-//TODO: surround w/ INDEF
-<<<<<<< HEAD
+#ifdef LDR_SUPPORT
+#endif
+
+#ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
+String mqttLDRDiscoveryTopic;            // MQTT topic for home-assistant auto discovery
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
-float ldrValue;
+float ldrValue = 0;                      // The value from LDR
+#endif
 
 #ifdef NEOPIXEL_SUPPORT
 String mqttLightBarState; // MQTT topic for the NeoPixel strip
 #endif
-=======
-String mqttLDRDiscoveryTopic;               // MQTT topic for home-assistant auto discovery
-String mqttLDRStateTopic;                   // MQTT topic for the LDR value
-unsigned long ldrUpdateInterval = 10000;    // miliseconds to wait between LDR updates (10000 => 10s)
-unsigned long ldrLastUpdateTime = millis(); // holds the milis() time of the last LDR check
-float ldrValue = 0;                         // The value from LDR
->>>>>>> add-ldr
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -288,14 +288,13 @@ void setup()
 
   motionSetup(); // Setup motion sensor if configured
 
-<<<<<<< HEAD
 #ifdef NEOPIXEL_SUPPORT
   pixelSetup();
 #endif
-=======
-  // TODO: wrap w/ IFDEF
+
+#ifdef LDR_SUPPORT
   ldrSetup(); // Setup LDR
->>>>>>> add-ldr
+#endif
 
   if (beepEnabled)
   { // Setup beep/tactile if configured
@@ -384,8 +383,9 @@ void loop()
     motionUpdate();
   }
 
-  // TODO: surround w/ IFDEF
+#ifdef LDR_SUPPORT
   ldrUpdate();
+#endif
 
 #ifdef NEOPIXEL_SUPPORT
   pixelUpdate();
@@ -461,8 +461,9 @@ void mqttConnect()
   mqttLightBrightStateTopic = "hasp/" + String(haspNode) + "/brightness/state";
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
-  //TODO : wrap with IFDEF
+#ifdef LDR_SUPPORT
   mqttLDRStateTopic = "hasp/" + String(mqttClientId) + "/ldr/state";
+#endif
 
   const String mqttCommandSubscription = mqttCommandTopic + "/#";
   const String mqttGroupCommandSubscription = mqttGroupCommandTopic + "/#";
@@ -1303,15 +1304,10 @@ void espWifiSetup()
     WiFiManagerParameter custom_mqttHeader("<br/><br/><b>MQTT Broker</b>");
     WiFiManagerParameter custom_mqttServer("mqttServer", "MQTT Server", mqttServer, 63, " maxlength=63");
     WiFiManagerParameter custom_mqttPort("mqttPort", "MQTT Port", mqttPort, 5, " maxlength=5 type='number'");
-<<<<<<< HEAD
-    WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 128, " maxlength=128");
-    WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 128, " maxlength=128 type='password'");
-=======
 
     //                                      id        placeholder default   length cutsom-attributes
     WiFiManagerParameter custom_mqttUser("mqttUser", "MQTT User", mqttUser, 127, " maxlength=127");
     WiFiManagerParameter custom_mqttPassword("mqttPassword", "MQTT Password", mqttPassword, 127, " maxlength=127 type='password'");
->>>>>>> extend-mqtt
     WiFiManagerParameter custom_configHeader("<br/><br/><b>Admin access</b>");
     WiFiManagerParameter custom_configUser("configUser", "Config User", configUser, 15, " maxlength=31'");
     WiFiManagerParameter custom_configPassword("configPassword", "Config Password", configPassword, 31, " maxlength=31 type='password'");
@@ -2606,6 +2602,39 @@ void motionSetup()
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+void motionUpdate()
+{
+  static unsigned long motionLatchTimer = 0;         // Timer for motion sensor latch
+  static unsigned long motionBufferTimer = millis(); // Timer for motion sensor buffer
+  static bool motionActiveBuffer = motionActive;
+  bool motionRead = digitalRead(motionPin);
+
+  if (motionRead != motionActiveBuffer)
+  { // if we've changed state
+    motionBufferTimer = millis();
+    motionActiveBuffer = motionRead;
+  }
+  else if (millis() > (motionBufferTimer + motionBufferTimeout))
+  {
+    if ((motionActiveBuffer && !motionActive) && (millis() > (motionLatchTimer + motionLatchTimeout)))
+    {
+      motionLatchTimer = millis();
+      mqttClient.publish(mqttMotionStateTopic, "ON");
+      motionActive = motionActiveBuffer;
+      debugPrintln("MOTION: Active");
+    }
+    else if ((!motionActiveBuffer && motionActive) && (millis() > (motionLatchTimer + motionLatchTimeout)))
+    {
+      motionLatchTimer = millis();
+      mqttClient.publish(mqttMotionStateTopic, "OFF");
+      motionActive = motionActiveBuffer;
+      debugPrintln("MOTION: Inactive");
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+#ifdef LDR_SUPPORT
 void ldrSetup()
 /*
   Take this oppertunity to announce to home assistant that we have a LDR
@@ -2662,40 +2691,6 @@ void ldrSetup()
 
   mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void motionUpdate()
-{
-  static unsigned long motionLatchTimer = 0;         // Timer for motion sensor latch
-  static unsigned long motionBufferTimer = millis(); // Timer for motion sensor buffer
-  static bool motionActiveBuffer = motionActive;
-  bool motionRead = digitalRead(motionPin);
-
-  if (motionRead != motionActiveBuffer)
-  { // if we've changed state
-    motionBufferTimer = millis();
-    motionActiveBuffer = motionRead;
-  }
-  else if (millis() > (motionBufferTimer + motionBufferTimeout))
-  {
-    if ((motionActiveBuffer && !motionActive) && (millis() > (motionLatchTimer + motionLatchTimeout)))
-    {
-      motionLatchTimer = millis();
-      mqttClient.publish(mqttMotionStateTopic, "ON");
-      motionActive = motionActiveBuffer;
-      debugPrintln("MOTION: Active");
-    }
-    else if ((!motionActiveBuffer && motionActive) && (millis() > (motionLatchTimer + motionLatchTimeout)))
-    {
-      motionLatchTimer = millis();
-      mqttClient.publish(mqttMotionStateTopic, "OFF");
-      motionActive = motionActiveBuffer;
-      debugPrintln("MOTION: Inactive");
-    }
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
 void ldrUpdate()
 /* Checks the LDR value on intervals configured by ldrUpdateInterval.
  * 
@@ -2718,7 +2713,6 @@ void ldrUpdate()
  *    or so with my finger above it.
  *  
  */
-// TODO: wrap w/ IFDEF
 {
   // When did we last check and is that more than ldrUpdateInterval in the past?
   if ((millis() - ldrLastUpdateTime) >= ldrUpdateInterval)
@@ -2726,31 +2720,17 @@ void ldrUpdate()
 
     // Now() - lastCheck is bigger than the interval so we're due for a check!
     ldrValue = analogRead(A0);
-<<<<<<< HEAD
-    //debugPrintln(String("LDR: value:") + String(ldrValue));
-    mqttClient.publish(mqttLDRStateTopic, String(ldrValue));
-=======
     debugPrintln(String(F("LDR: '")) + String(mqttLDRStateTopic) + String("' => ") + String(ldrValue));
 
     // a very simple JSON document
     String ldrConfigPayload = "{\"ldr_value\":\"" + String(ldrValue) + "\"}";
->>>>>>> add-ldr
 
     mqttClient.publish(mqttLDRStateTopic, ldrConfigPayload);
     // Update the lastUpdateTime
     ldrLastUpdateTime = millis();
-<<<<<<< HEAD
-  }
-  else
-  {
-    // No Update
-    //debugPrintln(String(F("LDR: value:")) + String(ldrValue));
-    //debugPrintln("LDR: no update, too soon!");
-=======
->>>>>>> add-ldr
   }
 }
-
+#endif
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef NEOPIXEL_SUPPORT
 void pixelSetup()
@@ -2999,9 +2979,7 @@ void pixelParseJson(String &strPayload)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void pixelUpdate()
-// TODO: wrap w/ IFDEF
 {
-  //debugPrintln(String("pixelUpdate alive!"));
   FastLED.show();
 }
 #endif
