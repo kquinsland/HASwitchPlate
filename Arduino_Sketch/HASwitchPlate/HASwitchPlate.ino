@@ -2681,6 +2681,9 @@ void pixelSetup()
   }
   delay(200);
   FastLED.clear();
+
+  debugPrintln("PIXEL: Callling announcePixelsToHA");
+  announcePixelsToHA();
 }
 
 void announcePixelsToHA()
@@ -2700,51 +2703,113 @@ void announcePixelsToHA()
   So i will most certainly use ArduinoJSON to compose the discovery JSON. This way, i can make it dynamic based on the 
   number of LEDs that the user has configured and the user can change the color PER pixel (or use a group/scene to set them all @ once)
 
+
+Note: ~ is the base topic
+
+
+<discovery_prefix>/light/[<node_id>/]<object_id>/config
+
+{
+  "~": "homeassistant/light/kitchen",
+  "name": "Kitchen",
+  "unique_id": "kitchen_light",
+  "cmd_t": "~/set",
+  "stat_t": "~/state",
+  "schema": "json",
+  "brightness": true
+
+ 
+The MQTT topic to publish commands to change the switch state.
+
+
+  
+
+Defines a template to extract the brightn
+
+
+
+
+The MQTT topic subscribed to receive brightness state updates.
+brightness_value_templatestring(Optional)
+
+Defines a template to extract the brightness value.
+
+
+
+}
+
   */
 
-  // Topic we'll write to
-  mqttLDRDiscoveryTopic = "homeassistant/sensor/" + String(mqttClientId) + "/ldr/config";
+  //mqttClientId = String(haspNode) + "-" + String(espMac[0], HEX) + String(espMac[1], HEX) + String(espMac[2], HEX) + String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX);
 
-  /*
-  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are
-  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR but to save
-  * users the trouble of having to further customize the sensor in HA, we claim to be of class 'illuminance'
-  *
-  * The JSON that we send to HA should look like this:
-  *     //TODO
-  */
+  // We'll need to produce one payload per pixel
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = JSON_OBJECT_SIZE(7);
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  {
+    // TODO: Abbreviate all topics (if we need)
+    DynamicJsonDocument discoDoc(discoMsgSize);
 
-  //mqttStateTopic = "hasp/" + String(haspNode) + "/state";
+    // Set the base topic
+    discoDoc["~"] = "homeassistant/light/hasp01-1234589/pixel1/config";
 
-  // Configuration document. Start with the name
-  String ldrConfigPayload = "{\"name\":\"" + String(haspNode) + "\",";
+    // Configure availability
+    JsonObject availability = doc.createNestedObject("availability");
+    availability["topic"] = "//TODO: the 'base' state task";
+    availability["payload_not_available"] = "//TODO: scrape the default payload and look for a string";
+    availability["payload_available"] = "//TODO: scrape the default payload and look for a string";
 
-  // Add the MAC with the name to make a unique_id
-  ldrConfigPayload += String("\"unique_id\":\"" + mqttClientId + "\",");
+    //// Configure brightness
+    // Tell HA how to configure brightness
+    discoDoc["brightness_command_topic"] = "//TODO: implement this (it's the same topic as color, just a different payload";
 
-  // Then tell HA what topic it can get the LDR state from
-  ldrConfigPayload += String("\"state_topic\":\"" + mqttLDRStateTopic + "\",");
+    // FastLED supports brightness scaling from 0 to 255
+    discoDoc["brightness_scale"] = 255;
 
-  /*
-  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are
-  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR so we claim
-  * to be from that class, but override the unit of measure to be accurate to our abilities
-  *
-  * See: https://www.home-assistant.io/integrations/sensor/#device-class
-  */
-  ldrConfigPayload += String("\"device_class\": \"illuminance\",");
-  ldrConfigPayload += String("\"unit_of_measurement\": \"volt\",");
+    // Tell HA where we publish changes to brightness
+    discoDoc["brightness_state_topic"] = "//TODO: implement this";
+    discoDoc["brightness_value_template"] = "//TODO: make jinja template to pull brightness out of state template";
 
-  // Last, tell HomeAssistant how to parse the value from the payload in the topic ^
-  // "value_template": "{{ value_json.ldr_value}}"
-  ldrConfigPayload += String("\"value_template\": \"{{ value_json.ldr_value}}\"");
+    // Tell HA where to send directions to
+    // TODO: make this dynamic
+    discoDoc["command_topic"] = "hasp/plate01/command/pixels";
+    discoDoc["name"] = String(haspNode) + "-" String() + "Pixel X";
+    discoDoc["unique_id"] = "hasp01-pixel01";
 
-  ldrConfigPayload += "}";
+    // Tell HA how to turn us on/off
+    // TODO: It might be a good idea implement a dedicated topic sub for this?
+    discoDoc["payload_off"] = "";
+    discoDoc["payload_on"] = "";
+
+    discoDoc["rgb_command_template"] = "";
+    discoDoc["rgb_command_topics"] = "";
+
+    doc["cmd_t"] = "~/set";
+    doc["stat_t"] = "~/state";
+    doc["schema"] = "json";
+    doc["brightness"] = true;
+  }
+
+  serializeJson(doc, Serial);
+
+  JsonObject &root = staticJsonBuffer.createObject();
+  root["name"] = FRIENDLY_NAME;
+  root["platform"] = "mqtt_json";
+  root["state_topic"] = MQTT_STATE_TOPIC;
+  root["command_topic"] = MQTT_COMMAND_TOPIC;
+  root["brightness"] = true;
+  root["rgb"] = true;
+  root["white_value"] = true;
+  root["color_temp"] = true;
+  root["effect"] = true;
+  root["effect_list"] = EFFECT_LIST;
+  root.printTo(jsonBuffer, sizeof(jsonBuffer));
+  publishToMQTT(MQTT_CONFIG_TOPIC, jsonBuffer);
 
   debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
   debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(ldrConfigPayload));
 
-  mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
+  //mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2782,10 +2847,10 @@ void pixelParseJson(String &strPayload)
   }
 
   // Try to get the 'v' key and verify that it's set to version 1
-  JsonVariantConst hasVersion = pixelDocument["v"];
-  if (hasVersion.isNull() || hasVersion != 1)
+  int payloadVersion = pixelDocument["v"].as<int>();
+  if (payloadVersion != 1)
   {
-    debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(hasVersion.as<int>() + "'"));
+    debugPrintln(String("PIXELS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'"));
     return;
   }
   // Try to get the 'b' key and present,
