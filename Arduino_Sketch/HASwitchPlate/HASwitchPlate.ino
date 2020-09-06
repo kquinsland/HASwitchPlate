@@ -583,7 +583,7 @@ void mqttCallback(String &strTopic, String &strPayload)
   {                               // '[...]/device/command/json' -m '["dim=5", "page 1"]' = nextionSendCmd("dim=50"), nextionSendCmd("page 1")
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
-  else if (strTopic == (mqttCommandTopic + "/pixel") || strTopic == (mqttGroupCommandTopic + "/pixel"))
+  else if (strTopic == (mqttCommandTopic + "/pixels") || strTopic == (mqttGroupCommandTopic + "/pixels"))
   {
     pixelParseJson(strPayload);
   }
