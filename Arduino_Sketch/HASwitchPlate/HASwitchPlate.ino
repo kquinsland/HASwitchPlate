@@ -93,26 +93,42 @@ char motionPinConfig[3] = "0";
 // See: http://fastled.io/docs/3.1/class_c_fast_l_e_d.html#a730ba7d967e882b4b893689cf333b2eb
 #define BRIGHTNESS 32
 CRGB leds[NUM_LEDS];
+// When we get a command to turn a single LED off, we must store the state of that LED so we can turn it back on.
+int led_cache[NUM_LEDS][3];
 
 /*
     We will allocate memory for the JSON document dynamically as we get MQTT messages.
     We can calculate the number of bytes needed now, though, as that will be static.
     The payload will look like this:
-        {
-          "v": 1,
-          "b": 128,
-          "c": "off",
-          "p": {
-            "1": [255, 255, 255],
-            "2": [255, 255, 255],
-            "3": [255, 255, 255],
-            "4": [255, 255, 255]
+      {
+        "v": 1,
+        "p": {
+          "0": {
+            "rgb": [255, 255, 255]
+          },
+          "1": {
+            "hsv": [255, 255, 255]
+          },
+          "2": {
+            "rgb": [255, 255, 255]
+          },
+          "3": {
+            "hsv": [255, 255, 255]
           }
-        }
-    the ArduinoJson library has a few macros to help w/ allocation. Don't forget the last 14 bytes for duplicate / misc characters!
+        },
+        "c": {
+          "0": "off",
+          "1": "off",
+          "2": "off",
+          "3": "off"
+        },
+        "b": 128
+      }
+    the ArduinoJson library has a few macros to help w/ allocation. Don't forget bytes for misc/dupe characters!
     See: https://arduinojson.org/v6/assistant/
 */
-const int pixelJsonBufferSize = 2 * JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + 20;
+const int pixelJsonBufferSize = 3 * JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + (NUM_LEDS * JSON_OBJECT_SIZE(1)) + 56;
+
 #endif
 
 const float haspVersion = 0.40;                     // Current HASP software release version
@@ -2936,39 +2952,43 @@ void announcePixelsToHA()
     discoDoc["pl_avail"] = "ON";
     discoDoc["pl_not_avail"] = "OFF";
 
-    // Tell HA how to command us
+    // Tell HA how to command us...
     discoDoc["cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
 
-    // Not needed when the payload is literal string ON/OFF
-    discoDoc["val_tpl"] = "{{value_json.s}}";
-    discoDoc["pl_off"] = "{\"v\":1,\"c\":\"off\"}";
-    discoDoc["pl_on"] = "{\"v\":1,\"c\":\"on\"}";
+    // ... How to decipher the on/off status of the LED
+    discoDoc["val_tpl"] = "{{value_json.p[" + String(i) + "]}}";
 
-    // Tell HA how to dim us
-    //TODO: implement/subscribe to this!
-    //discoDoc["bri_cmd_t"] = = mqttPixelsBaseTopic + "/bright";
+    // ... how to turn us on/off
+    discoDoc["pl_off"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'off'}}%}{{x|tojson}}";
+    discoDoc["pl_on"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'on'}}%}{{x|tojson}}";
 
-    // Tell HA how to parse the brightness
-    discoDoc["bri_stat_t"] = mqttPixelsStateTopic;
+    // Tell HA how to dim us. We use the same base/state topic
+    discoDoc["bri_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
+
+    discoDoc["bri_tpl"] = "{{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
+
     //TODO: use defensive template?
     discoDoc["bri_val_tpl"] = "{{value_json.b}}";
 
     discoDoc["bri_scl"] = FastLED.getBrightness();
 
-    // Needed? just want default behavior, i think?
-    // Or, maybe i want it as i can support brightness w/o on and off
+    // Tell HA that color / on-off / brightness should be sent independently
     discoDoc["on_cmd_type"] = "brightness";
 
-    // All 'set color' commands go to the cmnd topic
-    discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
-    // And the RGB value per pixel is read from the single state topic
-    discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
+    // All commands/inquiries go to the cmnd topic... even 'set color' commands
+    //discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
+    //discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
 
     // Tell HA how to encode RGB messages to us
-    discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
+    //discoDoc["rgb_cmd_tpl"] = "{{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
 
     // Tell HA how to parse the RGB values
-    discoDoc["rgb_val_tpl"] = "{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}}";
+    //discoDoc["rgb_val_tpl"] = "{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}}";
+
+    // TRY HSV for per-pixel color
+    discoDoc["hs_command_topic"] = mqttPixelsBaseTopic + "/cmnd";
+
+    discoDoc["hs_value_template"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'on'}}%}{{x|tojson}}";
 
     //"rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
 
@@ -3060,14 +3080,27 @@ void pixelParseJson(String &strPayload)
     Allocate room for document on the heap. The document should be quite small, At most, about 128 bytes for a payload that looks like this:
     {
       "v": 1,
-      "c": "off",
       "p": {
-        "0": [255, 255, 255],
-        "1": [255, 255, 255],
-        "2": [255, 255, 255],
-        "3": [255, 255, 255]
+        "0": {
+          "rgb": [255, 255, 255]
+        },
+        "1": {
+          "hsv": [255, 255, 255]
+        },
+        "2": {
+          "rgb": [255, 255, 255]
+        },
+        "3": {
+          "hsv": [255, 255, 255]
+        }
       },
-      "b":128
+      "c": {
+        "0": "off",
+        "1": "off",
+        "2": "off",
+        "3": "off"
+      },
+      "b": 128
     }
   */
   DynamicJsonDocument pixelDocument(pixelJsonBufferSize);
@@ -3089,69 +3122,110 @@ void pixelParseJson(String &strPayload)
     return;
   }
 
-  // Parse our the 'c' (command) and 'b' (brightness) keys
+  // Parse the brightmess, set that first. Then, set color buffers before we process any on/off commands
   /////
   // If 'b' not present, use default BRIGHTNESS
   // TODO: make sure between 0-255?
   int brightness = pixelDocument["b"].as<int>() | BRIGHTNESS;
-  // Pull out the command
-  String cmd = pixelDocument["c"];
-
-  debugPrintln(String("PIXELS: cmd: '") + cmd + "'");
-  if (cmd == "off")
-  {
-    // This is a neat trick, but not what we want to do:
-    // Clear the LED strip data *and* push to the strip
-    //FastLED.clear(true);
-    // We just want to turn the output off, not delete the color data
-    FastLED.setBrightness(0);
-    updatePixelState();
-    return;
-  }
-  if (cmd == "on")
-  {
-    // Restore brightness and push out the saved color data
-    FastLED.setBrightness(brightness);
-    // Since we got a valid command, don't continue on to processing the 'p' obj
-    updatePixelState();
-    return;
-  }
-
-  // If we didn't get a command, just set the brightness before setting pixels
-  debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
   FastLED.setBrightness(brightness);
+  debugPrintln(String("PIXELS: brightness: '") + String(brightness) + "'");
 
-  // Basic sanity check passed, pull out the 'p' object and iterate through it for RGB arrays
-  JsonObject pixels = pixelDocument["p"];
-  if (pixels.isNull())
+  // Set the colors buffers first.
+  JsonObject pixelsObj = pixelDocument["p"];
+  if (!pixelsObj.isNull())
   {
-    debugPrintln(String("PIXELS: [ERROR] Unable to parse Pixels."));
-  }
-  else
-  {
-    debugPrintln(String("PIXELS: Got: '") + String(pixels.size()) + "' pixels...");
+    debugPrintln(String("PIXELS: Got: '" + String(pixelsObj.size()) + "' pixels..."));
     for (uint8_t i = 0; i < NUM_LEDS; i++)
     {
-      debugPrintln(String("PIXEL: State num: ") + String(i));
-      JsonArray pixel_data = pixels[String(i)];
+      // Pull out the object representing the color for this LED
+      JsonObject colorData = pixelsObj[String(i)];
 
-      // If the user didn't send any data for this pixel, just move on
-      if (!pixel_data)
+      // Is the key RGB present or is the key CSV present?
+      if (colorData.containsKey("rgb"))
       {
-        debugPrintln(String("NULL AT ") + String(i));
-        continue;
+        JsonArray pixelData = pixelsObj[String(i)]["rgb"];
+        // If the user didn't send any data for this pixel, just move on
+        if (!pixelData.isNull())
+        {
+          debugPrintln(String("PIXELS: pixel" + String(i) + " is RGB!"));
+          int r;
+          int g;
+          int b;
+          r = pixelData[0];
+          g = pixelData[1];
+          b = pixelData[2];
+          leds[i] = CRGB(r, g, b);
+        }
       }
+      else if (colorData.containsKey("hsv"))
+      {
+        JsonArray pixelData = pixelsObj[String(i)]["csv"];
+        // If the user didn't send any data for this pixel, just move on
+        if (!pixelData.isNull())
+        {
+          debugPrintln(String("PIXELS: pixel" + String(i) + " is HSV!"));
 
-      int r;
-      int g;
-      int b;
-      r = pixel_data[0];
-      g = pixel_data[1];
-      b = pixel_data[2];
-      leds[i] = CRGB(r, g, b);
+          int hue = pixelData[0];
+          int sat = pixelData[1];
+          // We support setting the brightness this way, even if HA insists on sending it seperate, will default to brightness
+          int val = pixelData[2];
+
+          if (val)
+          {
+            leds[i] = CHSV(hue, sat, brightness);
+          }
+          else
+          {
+            leds[i] = CHSV(hue, sat, val);
+          }
+        }
+      }
       debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
     }
   }
+  else
+  {
+    debugPrintln(String("PIXELS: got null pixelsObj"));
+  }
+
+  // Pull out the command object and turn LEDs on/off after setting colors
+  JsonObject cmdObj = pixelDocument["c"];
+
+  // Process the command object, first
+  if (!cmdObj.isNull())
+  {
+    debugPrintln(String("PIXELS: Got: '" + String(cmdObj.size()) + "' commands..."));
+    for (uint8_t i = 0; i < NUM_LEDS; i++)
+    {
+      String cmd = cmdObj[String(i)];
+
+      // Did the user ask us to turn a specific pixel on?
+      if (cmd == "on")
+      {
+        // Fetch the state of the LED prior to clearing it out
+        leds[i][0] = led_cache[i][0];
+        leds[i][1] = led_cache[i][1];
+        leds[i][2] = led_cache[i][2];
+      }
+      else if (cmd == "off")
+      {
+        // Save the current LED state
+        led_cache[i][0] = leds[i][0];
+        led_cache[i][1] = leds[i][1];
+        led_cache[i][2] = leds[i][2];
+        // Write 0's
+        leds[i][0] = 0;
+        leds[i][1] = 0;
+        leds[i][2] = 0;
+      }
+    }
+  }
+  else
+  {
+    debugPrintln(String("PIXELS: got null cmdObj"));
+  }
+
+  // Finally, write out updated pixel buffers
   pixelUpdate();
   updatePixelState();
 }
@@ -3160,30 +3234,33 @@ void pixelParseJson(String &strPayload)
 void updatePixelState()
 {
   /*
-    Small function to write the state of all LEDs out to MQTT. THe status is pretty similar to the 'full'
-      command payload. It looks like this:
-
+    Small function to write the state of all LEDs out to MQTT. The state payload is identical to the
+      payload that sets the state... except we change the `command` key to the `state` key
         {
-          "b": 30,
-          "s": "off",
+          "v": 1,
           "p": {
-            "0": [0, 0, 64],
-            "1": [0, 0, 64],
-            "2": [10, 0, 0],
-            "3": [0, 0, 32]
-          }
+            "0": [255, 255, 255],
+            "1": [255, 255, 255],
+            "2": [255, 255, 255],
+            "3": [255, 255, 255]
+          },
+          "s": {
+            "0": "off",
+            "1": "off",
+            "2": "off",
+            "3": "off"
+          },
+          "b": 128
         }
   */
   // See: https://arduinojson.org/v6/assistant/
-  const size_t statusMsgSize = 4 * JSON_ARRAY_SIZE(3) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + 18;
-  DynamicJsonDocument pixelState(statusMsgSize);
+  DynamicJsonDocument pixelState(pixelJsonBufferSize);
 
   int bright = FastLED.getBrightness();
   pixelState["b"] = String(bright);
 
   // Encode all the pixels. While we loop through all pixels, check their RGB status so we can determine the on/off state
   JsonObject p = pixelState.createNestedObject("p");
-  int numPixelsOff = 0;
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
     JsonArray pixArr = p.createNestedArray(String(i));
@@ -3191,16 +3268,22 @@ void updatePixelState()
     pixArr.add(leds[i][0]);
     pixArr.add(leds[i][1]);
     pixArr.add(leds[i][2]);
+  }
 
+  // Record the effective command/state for the pixels
+  JsonObject s = pixelState.createNestedObject("s");
+  for (uint8_t i = 0; i < NUM_LEDS; i++)
+  {
     // This pixel is off
     if (leds[i][0] == 0 && leds[i][1] == 0 && leds[i][2] == 0)
     {
-      numPixelsOff += 1;
+      s[String(i)] = "off";
+    }
+    else
+    {
+      s[String(i)] = "on";
     }
   }
-
-  // Indicate that the pixels are off if al NUM_LEDS are off or the total system brightness is 0
-  pixelState["s"] = (numPixelsOff == NUM_LEDS || bright == 0) ? String("off") : String("on");
 
   // Not 100% sure why i can't allocate the char buffer dynamically based on pixelState.memoryUsage();... refuses to compile :/
   char output[512];
