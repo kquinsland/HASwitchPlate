@@ -2992,8 +2992,8 @@ void announcePixelsToHA()
     // Tell HA that the MAX brightness for the LED is 255
     discoDoc["bri_scl"] = 255;
 
-    // Tell HA that color / on-off / brightness should be sent independently
-    discoDoc["on_cmd_type"] = "brightness";
+    // Tell HA to send payload ON first which will immediately restore the color
+    discoDoc["on_cmd_type"] = "first";
 
     // All commands/inquiries go to the cmnd topic... even 'set color' commands
 
@@ -3224,11 +3224,8 @@ void pixelParseJson(String &strPayload)
       {
         // Save the current LED state
         led_cache[i][0] = leds[i][0];
-        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][0]));
         led_cache[i][1] = leds[i][1];
-        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][1]));
         led_cache[i][2] = leds[i][2];
-        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][2]));
         // Write 0's
         leds[i][0] = 0;
         leds[i][1] = 0;
