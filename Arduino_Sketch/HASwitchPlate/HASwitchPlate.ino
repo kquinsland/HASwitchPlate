@@ -421,6 +421,35 @@ void loop()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void mqttConnect()
+
+/*
+
+  TODO: Update the MQTT connect code to properly auto-announce to HA
+  I Pulled this JSON blob from a tasmota 8.4
+
+  This blob is what sets up the basic device, individual sensor/light entities will refer back to this
+    {
+      "name": "Tasmota status",
+      "stat_t": "tele/tasmota_771C2E/HASS_STATE",
+      "avty_t": "tele/tasmota_771C2E/LWT",
+      "pl_avail": "Online",
+      "pl_not_avail": "Offline",
+      "json_attr_t": "tele/tasmota_771C2E/HASS_STATE",
+      "unit_of_meas": "%",
+      "val_tpl": "{{value_json['RSSI']}}",
+      "ic": "mdi:information-outline",
+      "uniq_id": "771C2E_status",
+      "dev": {
+        "ids": ["771C2E"],
+        "name": "Tasmota",
+        "mdl": "Generic",
+        "sw": "8.4.0(tasmota)",
+        "mf": "Tasmota"
+      }
+    }
+
+*/
+
 { // MQTT connection and subscriptions
 
   // Generate an MQTT client ID as haspNode + our MAC address
@@ -2812,72 +2841,67 @@ void announcePixelsToHA()
 
   To save space, HomeAssistant supports 'minified' keys.
   See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
-  'uniq_id':             'unique_id',
-  'dev':                 'device',
-  'avty'                 'availability',
-  't':                   'topic',
-  'pl_not_avail':        'payload_not_available',
-  'pl_avail':            'payload_available',
-  'cmd_t':               'command_topic',
-  'cmd_off_tpl':         'command_off_template',
-  'cmd_on_tpl':          'command_on_template',
 
 
-  'bri_cmd_t':           'brightness_command_topic',
-  'bri_tpl':             'brightness_template',
-  'bri_stat_t':          'brightness_state_topic',
-  'bri_val_tpl':         'brightness_value_template',
-  'bri_scl':             'brightness_scale',
-
-  'rgb_cmd_t':           'rgb_command_topic',
-  'rgb_cmd_tpl':         'rgb_command_template',
-  'rgb_stat_t':          'rgb_state_topic',
-  'rgb_val_tpl':         'rgb_value_template',
-
-  Ultimately, this is the JSON that we need to send to MQTT for HomeAssistant to fully configure each pixel:
-
+  MODEL (from tasmota)
     {
-      "~": "homeassistant/light/$MqttID/",
-      "name": "$nodeName-$PixelID",
-
-      "uniq_id": "$nodeName-$PixelID",
+      "name": "Tasmota Tasmota",
+      "uniq_id": "771C2E_LI_1",
       "dev": {
-        "name": "$nodeName",
-        "model": "hasp1.0",
-        "sw_version": "$haspVersion",
+        "name": "plate01",
+        "mdl": "HASwitchPlate",
+        "ws": "0.40",
         "connections": [
-          ["mac", "02:5b:26:a8:dc:12"]
+          ["mac", "48:3f:da:77:1c:2e"]
+        ]
+      },
+      "stat_t": "tele/tasmota_771C2E/STATE",
+      "avty_t": "tele/tasmota_771C2E/LWT",
+      "pl_avail": "Online",
+      "pl_not_avail": "Offline",
+      "cmd_t": "cmnd/tasmota_771C2E/POWER",
+      "val_tpl": "{{value_json.POWER}}",
+      "pl_off": "OFF",
+      "pl_on": "ON",
+      "bri_cmd_t": "cmnd/tasmota_771C2E/Dimmer",
+      "bri_stat_t": "tele/tasmota_771C2E/STATE",
+      "bri_scl": 100,
+      "on_cmd_type": "brightness",
+      "bri_val_tpl": "{{value_json.Dimmer}}",
+      "rgb_cmd_t": "cmnd/tasmota_771C2E/Color2",
+      "rgb_stat_t": "tele/tasmota_771C2E/STATE",
+      "rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
+    }
+
+  MINE, from MQTT:
+    {
+      "name": "plate01 Pixel 0",
+      "unique_id": "plate01-px-0",
+      "dev": {
+        "name": "plate01",
+        "mdl": "HASwitchPlate",
+        "ws": "0.40",
+        "connections": [
+          ["mac", "48:3f:da:77:1c:2e"]
         ]
       },
 
-      "avty": {
-        "t": "",
-        "pl_not_avail": "",
-        "pl_avail": ""
-      },
-
-      "cmd_t": "",
-      "cmd_off_tpl": "",
-      "cmd_on_tpl": "",
-
-      "bri_cmd_t": "",
-      "bri_tpl": "",
-
-      "bri_stat_t": "",
-      "bri_val_tpl": "",
-
-      "bri_scl": "FastLED.getBrightness()", 
-      "brightness": "true",
-
-      "rgb_cmd_t": "",
-      "rgb_cmd_tpl": "",
-      "rgb_stat_t": "",
-      "rgb_val_tpl": ""
+      "cmd_t": "~/cmnd",
+      "rgb_command_topic": "~/cmnd",
+      "cmd_off_tpl": "{\"v\":1,\"c\":\"off\"}",
+      "cmd_on_tpl": "{\"v\":1,\"c\":\"on\"}",
+      "rgb_command_template": "//TODO: make a template",
+      "stat_t": "hasp/plate01-483fda771c2e/pixels/state",
+      "stat_val_tpl": "{%if value_json.p is defined %}{%if value_json.p[\"0\"] is defined %}{%if value_json.p[\"0\"][0] == 0 and value_json.p[\"0\"][1] == 0 and value_json.p[\"0\"][2] == 0%}off{%else%}on{%endif%}{%endif%}{%else%}off{%endif%}",
+      "brightness_command_topic": "~/cmnd",
+      "bri_tpl": "{%if value_json.b is defined %}{{value_json.b|int}}{%else%}0{%endif%}",
+      "brightness_scale": "96"
     }
+
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(18) + 379;
+  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(19) + 572;
 
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
@@ -2887,18 +2911,17 @@ void announcePixelsToHA()
 
     DynamicJsonDocument discoDoc(discoMsgSize);
 
-    // Set the base topic
-    discoDoc["~"] = mqttPixelsBaseTopic;
+    // Tell HA to use templates to encode/decode rather than use the exact JSON payloads that HA supports
 
     // Configure name and unique ID for *this pixel*. We'll use a common device name in the device obj
     discoDoc["name"] = String(haspNode) + " Pixel " + String(i);
-    discoDoc["unique_id"] = String(haspNode) + " Pixel " + String(i);
+    discoDoc["unique_id"] = String(haspNode) + "-px-" + String(i);
 
     // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
-    JsonObject device = discoDoc.createNestedObject("device");
+    JsonObject device = discoDoc.createNestedObject("dev");
     device["name"] = String(haspNode);
-    device["model"] = "HASwitchPlate";
-    device["sw_version"] = String(haspVersion);
+    device["mdl"] = "HASwitchPlate";
+    device["sw"] = String(haspVersion);
 
     // One of the easiest ways to indicate single device is to use the MAC
     JsonArray device_connections = device.createNestedArray("connections");
@@ -2906,54 +2929,123 @@ void announcePixelsToHA()
     device_connections_0.add("mac");
     device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
 
-    // Tell HA how to check if we're available or not
-    JsonObject availability = discoDoc.createNestedObject("availability");
+    // We will publish the state of ALL pixels in one location
+    discoDoc["stat_t"] = mqttPixelsStateTopic;
+    //TODO: may want to change this to a dedicated topic?
+    discoDoc["avty_t"] = mqttStatusTopic;
+    discoDoc["pl_avail"] = "ON";
+    discoDoc["pl_not_avail"] = "OFF";
+
+    // Tell HA how to command us
+    discoDoc["cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
+
+    // Not needed when the payload is literal string ON/OFF
+    discoDoc["val_tpl"] = "{{value_json.s}}";
+    discoDoc["pl_off"] = "{\"v\":1,\"c\":\"off\"}";
+    discoDoc["pl_on"] = "{\"v\":1,\"c\":\"on\"}";
+
+    // Tell HA how to dim us
+    //TODO: implement/subscribe to this!
+    //discoDoc["bri_cmd_t"] = = mqttPixelsBaseTopic + "/bright";
+
+    // Tell HA how to parse the brightness
+    discoDoc["bri_stat_t"] = mqttPixelsStateTopic;
+    //TODO: use defensive template?
+    discoDoc["bri_val_tpl"] = "{{value_json.b}}";
+
+    discoDoc["bri_scl"] = FastLED.getBrightness();
+
+    // Needed? just want default behavior, i think?
+    // Or, maybe i want it as i can support brightness w/o on and off
+    discoDoc["on_cmd_type"] = "brightness";
+
+    // All 'set color' commands go to the cmnd topic
+    discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
+    // And the RGB value per pixel is read from the single state topic
+    discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
+
+    // Tell HA how to encode RGB messages to us
+    discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
+
+    // Tell HA how to parse the RGB values
+    discoDoc["rgb_val_tpl"] = "{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}}";
+
+    //"rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
+
     // We use the 'status' topic as it's already set w/ on/off as needed
     //TODO: is retention on this going ot be an issue?
     //TODO: If i want the LEDs to operate independent of the screen, this is a poor choice of topics?
-    availability["t"] = mqttStatusTopic;
-    availability["pl_not_avail"] = "OFF";
-    availability["pl_avail"] = "ON";
+
+    // discoDoc["pl_not_avail"] = "OFF";
+    // discoDoc["pl_avail"] = "ON";
+    // Tell HA how to check if we're available or not
+    // WHen i tried to use the availability object, logs were FULL of errors:
+    // 432, in validate_mapping raise er.MultipleInvalid(errors) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['availability'][0]['t']
+    //discoDoc["avty_t"] = mqttStatusTopic;
 
     // Tell HA how to command us
-    discoDoc["cmd_t"] = "~/cmnd";
-    // Send a simple c = off to command off
-    discoDoc["cmd_off_tpl"] = "{\"v\":1,\"c\":\"off\"}";
-    discoDoc["cmd_on_tpl"] = "{\"v\":1,\"c\":\"on\"}";
+    //discoDoc["cmd_t"] = "~cmnd";
+    //rgb_command_topic
+    //discoDoc["rgb_cmd_t"] = "~cmnd";
+    //Disabled as i was getting errors:
+    // uilder.py", line 432, in validate_mapping raise er.MultipleInvalid(errors) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['rgb_command_topic']
 
-    // We will publish the state of ALL pixels in one location
-    discoDoc["state_topic"] = mqttPixelsStateTopic;
+    // Send a simple c = off or on to turn on/off
+    // discoDoc["cmd_off_tpl"] = "{\"v\":1,\"c\":\"off\"}";
+    // discoDoc["cmd_on_tpl"] = "{\"v\":1,\"c\":\"on\"}";
 
-    // Tell HA how to get the on/off state for each pixel
-    discoDoc["state_value_template"] = "//TODO: make a template for this";
+    /* Tell HA how to encode the color values for a given pixel
 
-    // And set brightness
-    discoDoc["brightness"] = true;
+    Since we only have one command endpoint for all pixels and that endpoint wants a version obj and a pixels obj, we use
+      the 'set' function to make a small data sctructure called x which has a `v` object and a `p` object which then has
+      a key for each pixel which maps to an array of RGB values
 
-    // Send brightness commands to the cmnd topic
-    discoDoc["brightness_command_topic"] = "~/cmnd";
+        {%set x={
+          'v':1,
+          'p':{
+              '0': [red,green,blue]
+            }
+          } 
+        %}
+
+        color0: {{x|tojson}}
+
+    */
+    //rgb_command_template
+    //discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
+    //Disabled as: extra keys not allowed @ data['rgb_command_template']
+
+    /*
+      Tell HA how to get the on/off state for each pixel. We code the template 'defensively', making sure to check that something is defined before accessing
+      Expanded out, this is what we need to encode:
+        {%if value_json.p is defined %}
+          {%if value_json.p["0"] is defined %}
+            {%if value_json.p["0"][0] == 0 and value_json.p["0"][1] == 0 and value_json.p["0"][2] == 0%}off{%else%}on{%endif%}
+          {%endif%}
+        {%else%}off{%endif%}
+    */
+    //state_value_template
+    //discoDoc["stat_val_tpl"] = "{%if value_json.p is defined %}{%if value_json.p[\"" + String(i) + "\"] is defined %}{%if value_json.p[\"" + String(i) + "\"][0] == 0 and value_json.p[\"" + String(i) + "\"][1] == 0 and value_json.p[\"" + String(i) + "\"][2] == 0%}off{%else%}on{%endif%}{%endif%}{%else%}off{%endif%}";
+    // Disabled as ) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['state_value_template']
+
+    // And set brightness... via the cmnd topic
+    //brightness_command_topic
+    //discoDoc["bri_cmd_t"] = "~cmnd";
+    // Disable as extra keys not allowed @ data['brightness_command_topic']
 
     // Tell HA how to parse the brightness out of the state payload
-    discoDoc["brightness_template"] = "//TODO: make a template";
+    //discoDoc["bri_tpl"] = "{%if value_json.b is defined %}{{value_json.b|int}}{%else%}0{%endif%}";
 
     // FastLED will reuturn an int
-    discoDoc["brightness_scale"] = String(FastLED.getBrightness());
+    //discoDoc["brightness_scale"] = String(FastLED.getBrightness());
+    // Disabled as: extra keys not allowed @ data['brightness_scale
 
-    // Set the color
-    // Send all RGB color change commands to the cmnd topic
-    discoDoc["rgb_command_topic"] = "~/cmnd";
-
-    discoDoc["rgb_command_template"] = "//TODO: make a template";
-
-    // Needed?!
-    //discoDoc["schema"] = "json";
     // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
     char output[1024];
     serializeJson(discoDoc, output);
     debugPrintln(String(F("PIXEL: DISCOVERY TOPIC: '")) + discoTopic);
     debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
-
-    mqttClient.publish(discoTopic, output);
+    mqttClient.publish(discoTopic, String(output));
   }
 }
 
@@ -2968,6 +3060,7 @@ void pixelParseJson(String &strPayload)
     Allocate room for document on the heap. The document should be quite small, At most, about 128 bytes for a payload that looks like this:
     {
       "v": 1,
+      "c": "off",
       "p": {
         "0": [255, 255, 255],
         "1": [255, 255, 255],
@@ -2978,9 +3071,6 @@ void pixelParseJson(String &strPayload)
     }
   */
   DynamicJsonDocument pixelDocument(pixelJsonBufferSize);
-
-  // print out the number of bytes to get a rough idea of sizes
-  debugPrintln(String("PIXELS: needed " + String(strPayload.length()) + " bytes, allocated: " + String(pixelJsonBufferSize)));
 
   // string -> JSON
   DeserializationError jsonError = deserializeJson(pixelDocument, strPayload);
@@ -3117,7 +3207,7 @@ void updatePixelState()
   serializeJson(pixelState, output);
   debugPrintln(String(F("PIXEL: STATE TOPIC: '")) + String(mqttPixelsStateTopic));
   debugPrintln(String(F("PIXEL: STATE PAYLOAD: '")) + String(output));
-  mqttClient.publish(mqttPixelsStateTopic, output);
+  mqttClient.publish(mqttPixelsStateTopic, String(output));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
