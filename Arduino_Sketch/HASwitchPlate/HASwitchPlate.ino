@@ -2889,30 +2889,6 @@ void announcePixelsToHA()
       "rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
     }
 
-  MINE, from MQTT:
-    {
-      "name": "plate01 Pixel 0",
-      "unique_id": "plate01-px-0",
-      "dev": {
-        "name": "plate01",
-        "mdl": "HASwitchPlate",
-        "ws": "0.40",
-        "connections": [
-          ["mac", "48:3f:da:77:1c:2e"]
-        ]
-      },
-
-      "cmd_t": "~/cmnd",
-      "rgb_command_topic": "~/cmnd",
-      "cmd_off_tpl": "{\"v\":1,\"c\":\"off\"}",
-      "cmd_on_tpl": "{\"v\":1,\"c\":\"on\"}",
-      "rgb_command_template": "//TODO: make a template",
-      "stat_t": "hasp/plate01-483fda771c2e/pixels/state",
-      "stat_val_tpl": "{%if value_json.p is defined %}{%if value_json.p[\"0\"] is defined %}{%if value_json.p[\"0\"][0] == 0 and value_json.p[\"0\"][1] == 0 and value_json.p[\"0\"][2] == 0%}off{%else%}on{%endif%}{%endif%}{%else%}off{%endif%}",
-      "brightness_command_topic": "~/cmnd",
-      "bri_tpl": "{%if value_json.b is defined %}{{value_json.b|int}}{%else%}0{%endif%}",
-      "brightness_scale": "96"
-    }
 
   */
 
@@ -2945,50 +2921,58 @@ void announcePixelsToHA()
     device_connections_0.add("mac");
     device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
 
-    // We will publish the state of ALL pixels in one location
-    discoDoc["stat_t"] = mqttPixelsStateTopic;
-    //TODO: may want to change this to a dedicated topic?
+    // use the topic that HASP uses to indicate state as our availability indicator
     discoDoc["avty_t"] = mqttStatusTopic;
     discoDoc["pl_avail"] = "ON";
     discoDoc["pl_not_avail"] = "OFF";
 
-    // Tell HA how to command us...
+    // Tell HA how to command and query us. Everything goes to one of two topics
     discoDoc["cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
 
-    // ... How to decipher the on/off status of the LED
-    discoDoc["val_tpl"] = "{{value_json.p[" + String(i) + "]}}";
+    // set RGB color
+    discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
 
-    // ... how to turn us on/off
-    discoDoc["pl_off"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'off'}}%}{{x|tojson}}";
-    discoDoc["pl_on"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'on'}}%}{{x|tojson}}";
+    // Query RGB state
+    discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
 
-    // Tell HA how to dim us. We use the same base/state topic
-    discoDoc["bri_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
+    // Tell HA how to decipher the state payload in order to get the...
+    //////
+    // ... on/off status of the LED
+    //discoDoc["val_tpl"] = "{{value_json.s['" + String(i) + "']}}";
+    discoDoc["stat_val_tpl"] = "{{value_json.s['" + String(i) + "']}}";
 
-    discoDoc["bri_tpl"] = "{{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
-
-    //TODO: use defensive template?
+    // ... current brightness of the LED
     discoDoc["bri_val_tpl"] = "{{value_json.b}}";
 
-    discoDoc["bri_scl"] = FastLED.getBrightness();
+    // ... get the current RGB value of a pixel
+    discoDoc["rgb_val_tpl"] = "{{value_json.p['" + String(i) + "'][0]}},{{value_json.p['" + String(i) + "'][1]}},{{value_json.p['" + String(i) + "'][2]}}";
+
+    // Tell HA how to command us in order to...
+    //////
+    // ... Turn us on/off
+    discoDoc["pl_off"] = "{'v':1,'c':{'" + String(i) + "':'off'}}";
+    discoDoc["pl_on"] = "{'v':1,'c':{'" + String(i) + "':'on'}}";
+
+    // ... set the brightness of a given pixel
+    //DISABLE as: extra keys not allowed @ data['brightness_template']
+    //discoDoc["bri_tpl"] = "{{%set x={'v':1,'p':{'" + String(i) + "':[red,green,blue]}}%}{{x|tojson}}";
+
+    // ... set the color for a given pixel
+    discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'" + String(i) + "':{'rgb':[red,green,blue]}}}%}{{x|tojson}}";
+
+    // Tell HA that the MAX brightness for the LED is 255
+    discoDoc["bri_scl"] = 255;
 
     // Tell HA that color / on-off / brightness should be sent independently
     discoDoc["on_cmd_type"] = "brightness";
 
     // All commands/inquiries go to the cmnd topic... even 'set color' commands
-    //discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
-    //discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
-
-    // Tell HA how to encode RGB messages to us
-    //discoDoc["rgb_cmd_tpl"] = "{{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
-
-    // Tell HA how to parse the RGB values
-    //discoDoc["rgb_val_tpl"] = "{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}},{{value_json.p[" + String(i) + "][0]}}";
 
     // TRY HSV for per-pixel color
-    discoDoc["hs_command_topic"] = mqttPixelsBaseTopic + "/cmnd";
+    // discoDoc["hs_command_topic"] = mqttPixelsBaseTopic + "/cmnd";
+    // discoDoc["hs_state_topic"] = mqttPixelsStateTopic;
 
-    discoDoc["hs_value_template"] = "{{%set x={'v':1,'c':{'" + String(i) + "':'on'}}%}{{x|tojson}}";
+    // discoDoc["hs_command_temp"] = "{{%set x={'v':1,'p':{'" + String(i) + "':{'hsv':[hue, saturation]}}%}{{x|tojson}}";
 
     //"rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
 
