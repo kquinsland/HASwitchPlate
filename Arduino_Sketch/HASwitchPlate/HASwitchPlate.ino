@@ -2889,12 +2889,41 @@ void announcePixelsToHA()
       "rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
     }
 
+  MINE:
+    {
+    "name": "plate01 Pixel 0",
+    "unique_id": "plate01-px-0",
+    "dev": {
+      "name": "plate01",
+      "mdl": "HASwitchPlate",
+      "sw": "0.40",
+      "connections": [
+        ["mac", "48:3f:da:77:1c:2e"]
+      ]
+    },
+    "avty_t": "hasp/plate01/status",
+    "pl_avail": "ON",
+    "pl_not_avail": "OFF",
+    "cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
+    "rgb_cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
+    "rgb_stat_t": "hasp/plate01-483fda771c2e/pixels/state",
+    "stat_val_tpl": "{{value_json.s['0']}}",
+    "bri_val_tpl": "{{value_json.b}}",
+    "rgb_val_tpl": "{{value_json.p['0'][0]}},{{value_json.p['0'][1]}},{{value_json.p['0'][2]}}",
+    "pl_off": "{'v':1,'c':{'0':'off'}}",
+    "pl_on": "{'v':1,'c':{'0':'on'}}",
+    "rgb_cmd_tpl": "{%set x={'v':1,'p':{'0':{'rgb':[red,green,blue]}}}%}{{x|tojson}}",
+    "bri_scl": 255,
+    "on_cmd_type": "brightness"
+  }
+
 
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(19) + 572;
+  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(17) + 638;
 
+  // TODO: remove the stuff that didn't work from below & clean up the code in general
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
     // Generate the discovery topic for *this* pixel.
@@ -3195,8 +3224,11 @@ void pixelParseJson(String &strPayload)
       {
         // Save the current LED state
         led_cache[i][0] = leds[i][0];
+        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][0]));
         led_cache[i][1] = leds[i][1];
+        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][1]));
         led_cache[i][2] = leds[i][2];
+        debugPrintln(String("PIXELS: led_cache[" + String(i) + "] =>" + led_cache[i][2]));
         // Write 0's
         leds[i][0] = 0;
         leds[i][1] = 0;
