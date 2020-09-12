@@ -191,6 +191,10 @@ String mqttLightStateTopic;                         // MQTT topic for outgoing p
 String mqttLightBrightCommandTopic;                 // MQTT topic for incoming panel backlight dimmer commands
 String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
+String mqttWiFiStatusTopic;                         // MQTT topic for publishing WiFI signal strength
+
+unsigned long rssiStatusUpdateInterval = 30000; // miliseconds to wait between RSSI updates
+unsigned long rssiStatusLastUpdateTime = 0;     // holds the milis() time of the last RSSI check
 
 #ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
@@ -301,6 +305,9 @@ void setup()
   mqttClient.onMessage(mqttCallback);                           // Setup MQTT callback function
   mqttConnect();                                                // Connect to MQTT
 
+  // Expose the WiFi signal quality as a sensor to HA
+  announceHASPSignalStrengthToHA();
+
   motionSetup(); // Setup motion sensor if configured
 
 #ifdef NEOPIXEL_SUPPORT
@@ -309,7 +316,7 @@ void setup()
 
 #ifdef LDR_SUPPORT
   // Configure the ADC + configure the LDR w/ HA
-  ldrSetup();
+  announceLDRtoHA();
 #endif
 
   if (beepEnabled)
@@ -402,6 +409,9 @@ void loop()
 #ifdef LDR_SUPPORT
   ldrUpdate();
 #endif
+
+  // Updates the RSSI
+  updateHASPSignalStrengthState();
 
 #ifdef NEOPIXEL_SUPPORT
   pixelUpdate();
@@ -498,7 +508,13 @@ void mqttConnect()
   mqttStateJSONTopic = "hasp/" + String(haspNode) + "/state/json";
   mqttCommandTopic = "hasp/" + String(haspNode) + "/command";
   mqttGroupCommandTopic = "hasp/" + String(groupName) + "/command";
+  // This is our LWT topic
   mqttStatusTopic = "hasp/" + String(haspNode) + "/status";
+
+  // Topic that we'll publish wifi sensor status to
+  mqttWiFiStatusTopic = "hasp/" + String(mqttClientId) + "/rssi/state";
+
+  // 'general' data
   mqttSensorTopic = "hasp/" + String(haspNode) + "/sensor";
   mqttLightCommandTopic = "hasp/" + String(haspNode) + "/light/switch";
   mqttLightStateTopic = "hasp/" + String(haspNode) + "/light/state";
@@ -615,6 +631,156 @@ void mqttConnect()
       }
     }
   }
+}
+
+/*
+  A simple function that takes the raw RSSI value and turns it into a percentage.
+  https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
+
+  Appears to be an implementation of the algo described here:
+  https://www.speedguide.net/faq/how-does-rssi-dbm-relate-to-signal-quality-percent-439
+*/
+
+int wifiGetRssiAsQuality(int rssi)
+{
+  int quality = 0;
+
+  if (rssi <= -100)
+  {
+    quality = 0;
+  }
+  else if (rssi >= -50)
+  {
+    quality = 100;
+  }
+  else
+  {
+    quality = 2 * (rssi + 100);
+  }
+  return quality;
+}
+
+void updateHASPSignalStrengthState()
+{
+  /* Called on an interval to publish the WiFi signal strength to MQTT for the HASP Sensor. Paylaod is quite simple:
+
+      {
+        "rssi": "-199",
+        "percent": "100"
+      }
+  */
+
+  if ((millis() - rssiStatusLastUpdateTime) >= rssiStatusUpdateInterval)
+  {
+
+    const size_t capacity = JSON_OBJECT_SIZE(2) + 30;
+    DynamicJsonDocument rssiStatusDoc(capacity);
+
+    // Publish the raw RSSI value
+    rssiStatusDoc["rssi"] = String(WiFi.RSSI());
+    // And the percent value
+    rssiStatusDoc["percent"] = wifiGetRssiAsQuality(WiFi.RSSI());
+
+    char output[1024];
+    serializeJson(rssiStatusDoc, output);
+    mqttClient.publish(String(mqttWiFiStatusTopic), String(output));
+
+    debugPrintln(String(F("RSSI: DISCOVERY TOPIC: '")) + mqttWiFiStatusTopic);
+    debugPrintln(String(F("RSSI: DISCOVERY PAYLOAD: '")) + String(output));
+
+    // Update the lastUpdateTime
+    rssiStatusLastUpdateTime = millis();
+  }
+}
+
+void announceHASPSignalStrengthToHA()
+{
+  /*
+    After Connecting to MQTT for the first time, we want to tell HA that a HASP device exists. I've modeled this payload off of the payloads that Tasmota sends.
+    All this payload does is set up a sensor for HASP wifi signal strength. This is NOT the payload that configures the LDR or LEDs!
+
+    See: https://www.home-assistant.io/docs/mqtt/discovery/
+
+    To save space, HomeAssistant supports 'minified' keys.
+    See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
+
+    {
+      "name": "HaspName status",
+      "stat_t": "NormalStateTopic",
+      "avty_t": "NormalAvailabiltiyTopic",
+      "pl_avail": "ON",
+      "pl_not_avail": "OFF",
+      "json_attr_t": "NormalStateTopic",
+      "unit_of_meas": "%",
+      "val_tpl": "{{value_json['RSSI']}}",
+      "ic": "mdi:information-outline",
+      "uniq_id": "77B16C_status",
+      "dev": {
+        "ids": ["MAC_ADDY_HERE"],
+        "name": "Tasmota",
+        "mdl": "Sonoff Basic",
+        "sw": "8.4.0(tasmota)",
+        "mf": "Tasmota",
+        "connections": [["mac","48:3f:da:77:1c:2e"]]
+      }
+    }
+
+    Here's the code that Tasmota Uses to get the RSSI into a raw percentage:
+    See: https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
+
+  */
+
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(11) + 332;
+
+  // Build the topic we'll publish to
+  String discoTopic = "homeassistant/sensor/" + String(mqttClientId) + "/rssi/config";
+
+  // ALlocate space for the document
+  DynamicJsonDocument discoDoc(discoMsgSize);
+
+  // Configure the name
+  discoDoc["name"] = String(haspNode) + " Status";
+  discoDoc["unique_id"] = String(mqttClientId) + "-status";
+
+  JsonObject device = discoDoc.createNestedObject("dev");
+  device["name"] = String(haspNode);
+  device["mdl"] = "HASwitchPlate";
+  device["sw"] = String(haspVersion);
+
+  // We transmit as many device specific UIDs as we can so that HA can identify this HASP uniquely.
+  ////
+  // Create array for the MACs
+  JsonArray device_connections = device.createNestedArray("connections");
+  JsonArray device_connections_0 = device_connections.createNestedArray();
+  device_connections_0.add("mac");
+  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+  // And use the last few octets as a unique ID
+  JsonArray dev_ids = device.createNestedArray("ids");
+  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
+
+  // A topic w/ Light Weight Telemetry. Should be "ON" as long as device is powered and connected to MQTT
+  discoDoc["avty_t"] = mqttStatusTopic;
+  discoDoc["pl_avail"] = "ON";
+  discoDoc["pl_not_avail"] = "OFF";
+
+  // Tell HA where to read the status of wifi
+  discoDoc["stat_t"] = mqttWiFiStatusTopic;
+  discoDoc["val_tpl"] = "{{value_json['percent']}}";
+  discoDoc["unit_of_meas"] = "%";
+
+  // Tell HA to use this icon
+  discoDoc["ic"] = "mdi:information-outline";
+  // We can publish the misc. status info as attributes
+  discoDoc["json_attr_t"] = mqttSensorTopic;
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+  char output[1024];
+  serializeJson(discoDoc, output);
+  debugPrintln(String(F("HASP: DISCOVERY TOPIC: '")) + discoTopic);
+  debugPrintln(String(F("HASP: DISCOVERY PAYLOAD: '")) + String(output));
+  mqttClient.publish(discoTopic, String(output));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -766,6 +932,26 @@ void mqttCallback(String &strTopic, String &strPayload)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void mqttStatusUpdate()
 { // Periodically publish a JSON string indicating system status
+  //TODO: Update this to ArduinoJSON
+  /*
+const size_t capacity = JSON_OBJECT_SIZE(12);
+DynamicJsonDocument doc(capacity);
+
+doc["status"] = "available";
+doc["espVersion"] = 0.4;
+doc["updateEspAvailable"] = false;
+doc["lcdConnected"] = true;
+doc["lcdVersion"] = "2";
+doc["updateLcdAvailable"] = false;
+doc["espUptime"] = 10;
+doc["signalStrength"] = -59;
+doc["haspIP"] = "10.0.30.195";
+doc["heapFree"] = 22136;
+doc["heapFragmentation"] = 3;
+doc["espCore"] = "2_7_4";
+
+serializeJson(doc, Serial);
+*/
   String mqttStatusPayload = "{";
   mqttStatusPayload += String(F("\"status\":\"available\","));
   mqttStatusPayload += String(F("\"espVersion\":")) + String(haspVersion) + String(F(","));
@@ -806,6 +992,12 @@ void mqttStatusUpdate()
   mqttClient.publish(mqttStatusTopic, "ON", true, 1);
   debugPrintln(String(F("MQTT: status update: ")) + String(mqttStatusPayload));
   debugPrintln(String(F("MQTT: binary_sensor state: [")) + mqttStatusTopic + "] : [ON]");
+
+  mqttClient.publish(mqttSensorTopic, mqttStatusPayload, true, 1);
+  mqttClient.publish(mqttStatusTopic, "ON", true, 1);
+
+  // Every time mqttStatusUpdate() is called, we also need to update the RSSI
+  updateHASPSignalStrengthState();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2693,7 +2885,7 @@ void motionUpdate()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef LDR_SUPPORT
-void ldrSetup()
+void announceLDRtoHA()
 {
   /*
   * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
@@ -2715,6 +2907,7 @@ void ldrSetup()
           "unit_of_measurement": "volts",
           "value_template": "{{ value_json.ldr_value}}",
           "dev": {
+            "ids": ["MAC_ADDY_HERE"],
             "name": "plate01",
             "mdl": "HASwitchPlate",
             "sw": "0.40",
@@ -2728,7 +2921,7 @@ void ldrSetup()
   mqttLDRDiscoTopic = "homeassistant/sensor/" + mqttClientId + "/ldr/config";
 
   // Space we need to allocate for the disco payload
-  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(7) + 260;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(7) + 245;
   DynamicJsonDocument discoDoc(discoMsgSize);
 
   // Use the user-configuerd name to drive the name of this component
@@ -2752,6 +2945,9 @@ void ldrSetup()
   device["name"] = String(haspNode);
   device["mdl"] = "HASwitchPlate";
   device["sw"] = String(haspVersion);
+
+  JsonArray dev_ids = device.createNestedArray("ids");
+  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
 
   // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
   JsonArray device_connections = device.createNestedArray("connections");
@@ -2798,7 +2994,7 @@ void ldrUpdate()
     ldrValue = analogRead(A0);
     debugPrintln(String(F("LDR: '")) + String(mqttLDRStateTopic) + String("' => ") + String(ldrValue));
 
-    // a very simple JSON document
+    // a very simple JSON document. So simple that we're not gonna bother w/ ArduinoJSON
     String ldrConfigPayload = "{\"ldr_value\":\"" + String(ldrValue) + "\"}";
 
     mqttClient.publish(mqttLDRStateTopic, ldrConfigPayload);
@@ -2871,6 +3067,7 @@ void announcePixelsToHA()
     "name": "plate01 Pixel 0",
     "unique_id": "plate01-px-0",
     "dev": {
+      "ids": ["77B16C"],
       "name": "plate01",
       "mdl": "HASwitchPlate",
       "sw": "0.40",
@@ -2897,7 +3094,7 @@ void announcePixelsToHA()
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(17) + 638;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(17) + 644;
 
   // Generate the discovery topic for *this* pixel.
   for (uint8_t i = 0; i < NUM_LEDS; i++)
@@ -2918,6 +3115,9 @@ void announcePixelsToHA()
     device["name"] = String(haspNode);
     device["mdl"] = "HASwitchPlate";
     device["sw"] = String(haspVersion);
+
+    JsonArray dev_ids = device.createNestedArray("ids");
+    dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
 
     // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
     JsonArray device_connections = device.createNestedArray("connections");
