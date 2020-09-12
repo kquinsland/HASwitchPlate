@@ -3480,8 +3480,7 @@ void rssiUpdate()
     serializeJson(rssiStatusDoc, output);
     mqttClient.publish(String(mqttWiFiStatusTopic), String(output));
 
-    debugPrintln(String(F("RSSI: DISCOVERY TOPIC: '")) + mqttWiFiStatusTopic);
-    debugPrintln(String(F("RSSI: DISCOVERY PAYLOAD: '")) + String(output));
+    debugPrintln(String(F("RSSI: '")) + String(output));
 
     // Update the lastUpdateTime
     rssiStatusLastUpdateTime = millis();
