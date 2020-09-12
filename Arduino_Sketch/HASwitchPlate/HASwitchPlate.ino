@@ -75,6 +75,9 @@ char motionPinConfig[3] = "0";
 // Set this to 1 to enable neopixel support
 #define NEOPIXEL_SUPPORT 1
 
+// Set this to 1 to enable RSSI signal strength support
+#define RSSI_SENSOR_SUPPORT 1
+
 #ifdef NEOPIXEL_SUPPORT
 // Tell FASTLED to use raw pin order. MUST be defined *before* library is included!
 #define FASTLED_ESP8266_RAW_PIN_ORDER
@@ -191,10 +194,12 @@ String mqttLightStateTopic;                         // MQTT topic for outgoing p
 String mqttLightBrightCommandTopic;                 // MQTT topic for incoming panel backlight dimmer commands
 String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
-String mqttWiFiStatusTopic;                         // MQTT topic for publishing WiFI signal strength
 
+#ifdef RSSI_SENSOR_STATE
+String mqttWiFiStatusTopic;                     // MQTT topic for publishing WiFI signal strength
 unsigned long rssiStatusUpdateInterval = 30000; // miliseconds to wait between RSSI updates
 unsigned long rssiStatusLastUpdateTime = 0;     // holds the milis() time of the last RSSI check
+#ifdef
 
 #ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
@@ -305,19 +310,7 @@ void setup()
   mqttClient.onMessage(mqttCallback);                           // Setup MQTT callback function
   mqttConnect();                                                // Connect to MQTT
 
-  // Expose the WiFi signal quality as a sensor to HA
-  announceHASPSignalStrengthToHA();
-
   motionSetup(); // Setup motion sensor if configured
-
-#ifdef NEOPIXEL_SUPPORT
-  pixelSetup();
-#endif
-
-#ifdef LDR_SUPPORT
-  // Configure the ADC + configure the LDR w/ HA
-  announceLDRtoHA();
-#endif
 
   if (beepEnabled)
   { // Setup beep/tactile if configured
@@ -332,6 +325,12 @@ void setup()
     debugPrintln(String(F("TELNET: debug server enabled at telnet:")) + WiFi.localIP().toString());
   }
 
+#ifdef NEOPIXEL_SUPPORT
+  pixelSetup();
+#endif
+
+  // After a successful MQTT connection and setting up everything, we can announce it all :)
+  announceAllToHomeAssistant();
   debugPrintln(F("SYSTEM: System init complete."));
 }
 
@@ -406,12 +405,14 @@ void loop()
     motionUpdate();
   }
 
+#ifdef RSSI_SENSOR_SUPPORT
+  // Updates the RSSI signal strength sensor
+  rssiUpdate();
+#endif
+
 #ifdef LDR_SUPPORT
   ldrUpdate();
 #endif
-
-  // Updates the RSSI
-  updateHASPSignalStrengthState();
 
 #ifdef NEOPIXEL_SUPPORT
   pixelUpdate();
@@ -511,8 +512,10 @@ void mqttConnect()
   // This is our LWT topic
   mqttStatusTopic = "hasp/" + String(haspNode) + "/status";
 
+#ifdef RSSI_SENSOR_SUPPORT
   // Topic that we'll publish wifi sensor status to
   mqttWiFiStatusTopic = "hasp/" + String(mqttClientId) + "/rssi/state";
+#ifdef
 
   // 'general' data
   mqttSensorTopic = "hasp/" + String(haspNode) + "/sensor";
@@ -633,156 +636,6 @@ void mqttConnect()
   }
 }
 
-/*
-  A simple function that takes the raw RSSI value and turns it into a percentage.
-  https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
-
-  Appears to be an implementation of the algo described here:
-  https://www.speedguide.net/faq/how-does-rssi-dbm-relate-to-signal-quality-percent-439
-*/
-
-int wifiGetRssiAsQuality(int rssi)
-{
-  int quality = 0;
-
-  if (rssi <= -100)
-  {
-    quality = 0;
-  }
-  else if (rssi >= -50)
-  {
-    quality = 100;
-  }
-  else
-  {
-    quality = 2 * (rssi + 100);
-  }
-  return quality;
-}
-
-void updateHASPSignalStrengthState()
-{
-  /* Called on an interval to publish the WiFi signal strength to MQTT for the HASP Sensor. Paylaod is quite simple:
-
-      {
-        "rssi": "-199",
-        "percent": "100"
-      }
-  */
-
-  if ((millis() - rssiStatusLastUpdateTime) >= rssiStatusUpdateInterval)
-  {
-
-    const size_t capacity = JSON_OBJECT_SIZE(2) + 30;
-    DynamicJsonDocument rssiStatusDoc(capacity);
-
-    // Publish the raw RSSI value
-    rssiStatusDoc["rssi"] = String(WiFi.RSSI());
-    // And the percent value
-    rssiStatusDoc["percent"] = wifiGetRssiAsQuality(WiFi.RSSI());
-
-    char output[1024];
-    serializeJson(rssiStatusDoc, output);
-    mqttClient.publish(String(mqttWiFiStatusTopic), String(output));
-
-    debugPrintln(String(F("RSSI: DISCOVERY TOPIC: '")) + mqttWiFiStatusTopic);
-    debugPrintln(String(F("RSSI: DISCOVERY PAYLOAD: '")) + String(output));
-
-    // Update the lastUpdateTime
-    rssiStatusLastUpdateTime = millis();
-  }
-}
-
-void announceHASPSignalStrengthToHA()
-{
-  /*
-    After Connecting to MQTT for the first time, we want to tell HA that a HASP device exists. I've modeled this payload off of the payloads that Tasmota sends.
-    All this payload does is set up a sensor for HASP wifi signal strength. This is NOT the payload that configures the LDR or LEDs!
-
-    See: https://www.home-assistant.io/docs/mqtt/discovery/
-
-    To save space, HomeAssistant supports 'minified' keys.
-    See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
-
-    {
-      "name": "HaspName status",
-      "stat_t": "NormalStateTopic",
-      "avty_t": "NormalAvailabiltiyTopic",
-      "pl_avail": "ON",
-      "pl_not_avail": "OFF",
-      "json_attr_t": "NormalStateTopic",
-      "unit_of_meas": "%",
-      "val_tpl": "{{value_json['RSSI']}}",
-      "ic": "mdi:information-outline",
-      "uniq_id": "77B16C_status",
-      "dev": {
-        "ids": ["MAC_ADDY_HERE"],
-        "name": "Tasmota",
-        "mdl": "Sonoff Basic",
-        "sw": "8.4.0(tasmota)",
-        "mf": "Tasmota",
-        "connections": [["mac","48:3f:da:77:1c:2e"]]
-      }
-    }
-
-    Here's the code that Tasmota Uses to get the RSSI into a raw percentage:
-    See: https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
-
-  */
-
-  // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(11) + 332;
-
-  // Build the topic we'll publish to
-  String discoTopic = "homeassistant/sensor/" + String(mqttClientId) + "/rssi/config";
-
-  // ALlocate space for the document
-  DynamicJsonDocument discoDoc(discoMsgSize);
-
-  // Configure the name
-  discoDoc["name"] = String(haspNode) + " Status";
-  discoDoc["unique_id"] = String(mqttClientId) + "-status";
-
-  JsonObject device = discoDoc.createNestedObject("dev");
-  device["name"] = String(haspNode);
-  device["mdl"] = "HASwitchPlate";
-  device["sw"] = String(haspVersion);
-
-  // We transmit as many device specific UIDs as we can so that HA can identify this HASP uniquely.
-  ////
-  // Create array for the MACs
-  JsonArray device_connections = device.createNestedArray("connections");
-  JsonArray device_connections_0 = device_connections.createNestedArray();
-  device_connections_0.add("mac");
-  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
-
-  // And use the last few octets as a unique ID
-  JsonArray dev_ids = device.createNestedArray("ids");
-  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
-
-  // A topic w/ Light Weight Telemetry. Should be "ON" as long as device is powered and connected to MQTT
-  discoDoc["avty_t"] = mqttStatusTopic;
-  discoDoc["pl_avail"] = "ON";
-  discoDoc["pl_not_avail"] = "OFF";
-
-  // Tell HA where to read the status of wifi
-  discoDoc["stat_t"] = mqttWiFiStatusTopic;
-  discoDoc["val_tpl"] = "{{value_json['percent']}}";
-  discoDoc["unit_of_meas"] = "%";
-
-  // Tell HA to use this icon
-  discoDoc["ic"] = "mdi:information-outline";
-  // We can publish the misc. status info as attributes
-  discoDoc["json_attr_t"] = mqttSensorTopic;
-
-  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
-  char output[1024];
-  serializeJson(discoDoc, output);
-  debugPrintln(String(F("HASP: DISCOVERY TOPIC: '")) + discoTopic);
-  debugPrintln(String(F("HASP: DISCOVERY PAYLOAD: '")) + String(output));
-  mqttClient.publish(discoTopic, String(output));
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void mqttCallback(String &strTopic, String &strPayload)
 { // Handle incoming commands from MQTT
@@ -826,8 +679,12 @@ void mqttCallback(String &strTopic, String &strPayload)
   {                               // '[...]/device/command/json' -m '["dim=5", "page 1"]' = nextionSendCmd("dim=50"), nextionSendCmd("page 1")
     nextionParseJson(strPayload); // Send to nextionParseJson()
   }
+  // Command to trigger auto-config
+  else if (strTopic == (mqttCommandTopic + "/disco") || strTopic == (mqttGroupCommandTopic + "/disco"))
+  {
+    announceAllToHomeAssistant();
+  }
 #ifdef NEOPIXEL_SUPPORT
-
   else if (strTopic == mqttPixelsBaseTopic + "/cmnd" || strTopic == (mqttGroupCommandTopic + "/pixels"))
   {
     pixelParseJson(strPayload);
@@ -997,7 +854,7 @@ serializeJson(doc, Serial);
   mqttClient.publish(mqttStatusTopic, "ON", true, 1);
 
   // Every time mqttStatusUpdate() is called, we also need to update the RSSI
-  updateHASPSignalStrengthState();
+  rssiUpdate();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2882,6 +2739,168 @@ void motionUpdate()
     }
   }
 }
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void handleTelnetClient()
+{ // Basic telnet client handling code from: https://gist.github.com/tablatronix/4793677ca748f5f584c95ec4a2b10303
+  static unsigned long telnetInputIndex = 0;
+  if (telnetServer.hasClient())
+  { // client is connected
+    if (!telnetClient || !telnetClient.connected())
+    {
+      if (telnetClient)
+      {
+        telnetClient.stop(); // client disconnected
+      }
+      telnetClient = telnetServer.available(); // ready for new client
+      telnetInputIndex = 0;                    // reset input buffer index
+    }
+    else
+    {
+      telnetServer.available().stop(); // have client, block new connections
+    }
+  }
+  // Handle client input from telnet connection.
+  if (telnetClient && telnetClient.connected() && telnetClient.available())
+  { // client input processing
+    static char telnetInputBuffer[telnetInputMax];
+
+    if (telnetClient.available())
+    {
+      char telnetInputByte = telnetClient.read(); // Read client byte
+      // debugPrintln(String("telnet in: 0x") + String(telnetInputByte, HEX));
+      if (telnetInputByte == 5)
+      { // If the telnet client sent a bunch of control commands on connection (which end in ENQUIRY/0x05), ignore them and restart the buffer
+        telnetInputIndex = 0;
+      }
+      else if (telnetInputByte == 13)
+      { // telnet line endings should be CRLF: https://tools.ietf.org/html/rfc5198#appendix-C
+        // If we get a CR just ignore it
+      }
+      else if (telnetInputByte == 10)
+      {                                          // We've caught a LF (DEC 10), send buffer contents to the Nextion
+        telnetInputBuffer[telnetInputIndex] = 0; // null terminate our char array
+        nextionSendCmd(String(telnetInputBuffer));
+        telnetInputIndex = 0;
+      }
+      else if (telnetInputIndex < telnetInputMax)
+      { // If we have room left in our buffer add the current byte
+        telnetInputBuffer[telnetInputIndex] = telnetInputByte;
+        telnetInputIndex++;
+      }
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void debugPrintln(String debugText)
+{ // Debug output line of text to our debug targets
+  String debugTimeText = "[+" + String(float(millis()) / 1000, 3) + "s] " + debugText;
+  Serial.println(debugTimeText);
+  if (debugSerialEnabled)
+  {
+    SoftwareSerial debugSerial(-1, 1); // -1==nc for RX, 1==TX pin
+    debugSerial.begin(115200);
+    debugSerial.println(debugTimeText);
+    debugSerial.flush();
+  }
+  if (debugTelnetEnabled)
+  {
+    if (telnetClient.connected())
+    {
+      telnetClient.println(debugTimeText);
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void debugPrint(String debugText)
+{ // Debug output single character to our debug targets (DON'T USE THIS!)
+  // Try to avoid using this function if at all possible.  When connected to telnet, printing each
+  // character requires a full TCP round-trip + acknowledgement back and execution halts while this
+  // happens.  Far better to put everything into a line and send it all out in one packet using
+  // debugPrintln.
+  if (debugSerialEnabled)
+    Serial.print(debugText);
+  {
+    SoftwareSerial debugSerial(-1, 1); // -1==nc for RX, 1==TX pin
+    debugSerial.begin(115200);
+    debugSerial.print(debugText);
+    debugSerial.flush();
+  }
+  if (debugTelnetEnabled)
+  {
+    if (telnetClient.connected())
+    {
+      telnetClient.print(debugText);
+    }
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Submitted by benmprojects to handle "beep" commands. Split
+// incoming String by separator, return selected field as String
+// Original source: https://arduino.stackexchange.com/a/1237
+String getSubtringField(String data, char separator, int index)
+{
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length();
+
+  for (int i = 0; i <= maxIndex && found <= index; i++)
+  {
+    if (data.charAt(i) == separator || i == maxIndex)
+    {
+      found++;
+      strIndex[0] = strIndex[1] + 1;
+      strIndex[1] = (i == maxIndex) ? i + 1 : i;
+    }
+  }
+  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+////////////////////////////////////////////////////////////////////////////////
+String printHex8(byte *data, uint8_t length)
+{ // returns input bytes as printable hex values in the format 01 23 FF
+
+  String hex8String;
+  for (int i = 0; i < length; i++)
+  {
+    // hex8String += "0x";
+    if (data[i] < 0x10)
+    {
+      hex8String += "0";
+    }
+    hex8String += String(data[i], HEX);
+    if (i != (length - 1))
+    {
+      hex8String += " ";
+    }
+  }
+  hex8String.toUpperCase();
+  return hex8String;
+}
+
+/*
+  Wrapper function to broadcast all enabled HA Autoconf payloads
+*/
+
+void announceAllToHomeAssistant()
+{
+
+#ifdef RSSI_SENSOR_SUPPORT
+  // Expose the WiFi signal quality as a sensor to HA
+  announceRSSItoHA();
+#ifdef
+
+#ifdef LDR_SUPPORT
+  // Configure the ADC + configure the LDR w/ HA
+  announceLDRtoHA();
+#endif
+
+#ifdef PIXEL_SUPPORT
+  announcePixelsToHA();
+#endif
+}
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef LDR_SUPPORT
@@ -2936,7 +2955,7 @@ void announceLDRtoHA()
 
   // Tell HA that we're a light measure device, reporting in volts
   discoDoc["device_class"] = "illuminance";
-  discoDoc["unit_of_measurement"] = "volts";
+  discoDoc["unit_of_measurement"] = "millivolt";
 
   // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
   //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
@@ -3028,9 +3047,6 @@ void pixelSetup()
   }
   delay(200);
   FastLED.clear();
-
-  debugPrintln("PIXEL: Callling announcePixelsToHA");
-  announcePixelsToHA();
 }
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 void announcePixelsToHA()
@@ -3064,31 +3080,31 @@ void announcePixelsToHA()
 
   Here is the JSON that is sent.
     {
-    "name": "plate01 Pixel 0",
-    "unique_id": "plate01-px-0",
-    "dev": {
-      "ids": ["77B16C"],
-      "name": "plate01",
-      "mdl": "HASwitchPlate",
-      "sw": "0.40",
-      "connections": [
-        ["mac", "48:3f:da:77:1c:2e"]
-      ]
-    },
-    "avty_t": "hasp/plate01/status",
-    "pl_avail": "ON",
-    "pl_not_avail": "OFF",
-    "cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
-    "rgb_cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
-    "rgb_stat_t": "hasp/plate01-483fda771c2e/pixels/state",
-    "stat_val_tpl": "{{value_json.s['0']}}",
-    "bri_val_tpl": "{{value_json.b}}",
-    "rgb_val_tpl": "{{value_json.p['0'][0]}},{{value_json.p['0'][1]}},{{value_json.p['0'][2]}}",
-    "pl_off": "{'v':1,'c':{'0':'off'}}",
-    "pl_on": "{'v':1,'c':{'0':'on'}}",
-    "rgb_cmd_tpl": "{%set x={'v':1,'p':{'0':{'rgb':[red,green,blue]}}}%}{{x|tojson}}",
-    "bri_scl": 255,
-    "on_cmd_type": "brightness"
+      "name": "plate01 Pixel 0",
+      "unique_id": "plate01-px-0",
+      "dev": {
+        "ids": ["77B16C"],
+        "name": "plate01",
+        "mdl": "HASwitchPlate",
+        "sw": "0.40",
+        "connections": [
+          ["mac", "48:3f:da:77:1c:2e"]
+        ]
+      },
+      "avty_t": "hasp/plate01/status",
+      "pl_avail": "ON",
+      "pl_not_avail": "OFF",
+      "cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
+      "rgb_cmd_t": "hasp/plate01-483fda771c2e/pixels/cmnd",
+      "rgb_stat_t": "hasp/plate01-483fda771c2e/pixels/state",
+      "stat_val_tpl": "{{value_json.s['0']}}",
+      "bri_val_tpl": "{{value_json.b}}",
+      "rgb_val_tpl": "{{value_json.p['0'][0]}},{{value_json.p['0'][1]}},{{value_json.p['0'][2]}}",
+      "pl_off": "{'v':1,'c':{'0':'off'}}",
+      "pl_on": "{'v':1,'c':{'0':'on'}}",
+      "rgb_cmd_tpl": "{%set x={'v':1,'p':{'0':{'rgb':[red,green,blue]}}}%}{{x|tojson}}",
+      "bri_scl": 255,
+      "on_cmd_type": "brightness"
   }
 
   */
@@ -3409,143 +3425,155 @@ void pixelUpdate()
 }
 #endif
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void handleTelnetClient()
-{ // Basic telnet client handling code from: https://gist.github.com/tablatronix/4793677ca748f5f584c95ec4a2b10303
-  static unsigned long telnetInputIndex = 0;
-  if (telnetServer.hasClient())
-  { // client is connected
-    if (!telnetClient || !telnetClient.connected())
-    {
-      if (telnetClient)
-      {
-        telnetClient.stop(); // client disconnected
-      }
-      telnetClient = telnetServer.available(); // ready for new client
-      telnetInputIndex = 0;                    // reset input buffer index
-    }
-    else
-    {
-      telnetServer.available().stop(); // have client, block new connections
-    }
-  }
-  // Handle client input from telnet connection.
-  if (telnetClient && telnetClient.connected() && telnetClient.available())
-  { // client input processing
-    static char telnetInputBuffer[telnetInputMax];
+#ifdef RSSI_SENSOR_SUPPORT
 
-    if (telnetClient.available())
-    {
-      char telnetInputByte = telnetClient.read(); // Read client byte
-      // debugPrintln(String("telnet in: 0x") + String(telnetInputByte, HEX));
-      if (telnetInputByte == 5)
-      { // If the telnet client sent a bunch of control commands on connection (which end in ENQUIRY/0x05), ignore them and restart the buffer
-        telnetInputIndex = 0;
-      }
-      else if (telnetInputByte == 13)
-      { // telnet line endings should be CRLF: https://tools.ietf.org/html/rfc5198#appendix-C
-        // If we get a CR just ignore it
-      }
-      else if (telnetInputByte == 10)
-      {                                          // We've caught a LF (DEC 10), send buffer contents to the Nextion
-        telnetInputBuffer[telnetInputIndex] = 0; // null terminate our char array
-        nextionSendCmd(String(telnetInputBuffer));
-        telnetInputIndex = 0;
-      }
-      else if (telnetInputIndex < telnetInputMax)
-      { // If we have room left in our buffer add the current byte
-        telnetInputBuffer[telnetInputIndex] = telnetInputByte;
-        telnetInputIndex++;
-      }
-    }
-  }
-}
+/*
+  A simple function that takes the raw RSSI value and turns it into a percentage.
+  https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void debugPrintln(String debugText)
-{ // Debug output line of text to our debug targets
-  String debugTimeText = "[+" + String(float(millis()) / 1000, 3) + "s] " + debugText;
-  Serial.println(debugTimeText);
-  if (debugSerialEnabled)
-  {
-    SoftwareSerial debugSerial(-1, 1); // -1==nc for RX, 1==TX pin
-    debugSerial.begin(115200);
-    debugSerial.println(debugTimeText);
-    debugSerial.flush();
-  }
-  if (debugTelnetEnabled)
-  {
-    if (telnetClient.connected())
-    {
-      telnetClient.println(debugTimeText);
-    }
-  }
-}
+  Appears to be an implementation of the algo described here:
+  https://www.speedguide.net/faq/how-does-rssi-dbm-relate-to-signal-quality-percent-439
+*/
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-void debugPrint(String debugText)
-{ // Debug output single character to our debug targets (DON'T USE THIS!)
-  // Try to avoid using this function if at all possible.  When connected to telnet, printing each
-  // character requires a full TCP round-trip + acknowledgement back and execution halts while this
-  // happens.  Far better to put everything into a line and send it all out in one packet using
-  // debugPrintln.
-  if (debugSerialEnabled)
-    Serial.print(debugText);
-  {
-    SoftwareSerial debugSerial(-1, 1); // -1==nc for RX, 1==TX pin
-    debugSerial.begin(115200);
-    debugSerial.print(debugText);
-    debugSerial.flush();
-  }
-  if (debugTelnetEnabled)
-  {
-    if (telnetClient.connected())
-    {
-      telnetClient.print(debugText);
-    }
-  }
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Submitted by benmprojects to handle "beep" commands. Split
-// incoming String by separator, return selected field as String
-// Original source: https://arduino.stackexchange.com/a/1237
-String getSubtringField(String data, char separator, int index)
+int wifiGetRssiAsQuality(int rssi)
 {
-  int found = 0;
-  int strIndex[] = {0, -1};
-  int maxIndex = data.length();
+  int quality = 0;
 
-  for (int i = 0; i <= maxIndex && found <= index; i++)
+  if (rssi <= -100)
   {
-    if (data.charAt(i) == separator || i == maxIndex)
-    {
-      found++;
-      strIndex[0] = strIndex[1] + 1;
-      strIndex[1] = (i == maxIndex) ? i + 1 : i;
-    }
+    quality = 0;
   }
-  return found > index ? data.substring(strIndex[0], strIndex[1]) : "";
+  else if (rssi >= -50)
+  {
+    quality = 100;
+  }
+  else
+  {
+    quality = 2 * (rssi + 100);
+  }
+  return quality;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-String printHex8(byte *data, uint8_t length)
-{ // returns input bytes as printable hex values in the format 01 23 FF
+void rssiUpdate()
+{
+  /* Called on an interval to publish the WiFi signal strength to MQTT for the HASP Sensor. Paylaod is quite simple:
 
-  String hex8String;
-  for (int i = 0; i < length; i++)
+      {
+        "rssi": "-199",
+        "percent": "100"
+      }
+  */
+
+  if ((millis() - rssiStatusLastUpdateTime) >= rssiStatusUpdateInterval)
   {
-    // hex8String += "0x";
-    if (data[i] < 0x10)
-    {
-      hex8String += "0";
-    }
-    hex8String += String(data[i], HEX);
-    if (i != (length - 1))
-    {
-      hex8String += " ";
-    }
+
+    const size_t capacity = JSON_OBJECT_SIZE(2) + 30;
+    DynamicJsonDocument rssiStatusDoc(capacity);
+
+    // Publish the raw RSSI value
+    rssiStatusDoc["rssi"] = String(WiFi.RSSI());
+    // And the percent value
+    rssiStatusDoc["percent"] = wifiGetRssiAsQuality(WiFi.RSSI());
+
+    char output[1024];
+    serializeJson(rssiStatusDoc, output);
+    mqttClient.publish(String(mqttWiFiStatusTopic), String(output));
+
+    debugPrintln(String(F("RSSI: DISCOVERY TOPIC: '")) + mqttWiFiStatusTopic);
+    debugPrintln(String(F("RSSI: DISCOVERY PAYLOAD: '")) + String(output));
+
+    // Update the lastUpdateTime
+    rssiStatusLastUpdateTime = millis();
   }
-  hex8String.toUpperCase();
-  return hex8String;
 }
+
+void announceRSSItoHA()
+{
+  /*
+    After Connecting to MQTT for the first time, we want to tell HA that a HASP device exists. I've modeled this payload off of the payloads that Tasmota sends.
+    All this payload does is set up a sensor for HASP wifi signal strength. This is NOT the payload that configures the LDR or LEDs!
+
+    See: https://www.home-assistant.io/docs/mqtt/discovery/
+
+    To save space, HomeAssistant supports 'minified' keys.
+    See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
+
+    {
+      "name": "HaspName status",
+      "stat_t": "NormalStateTopic",
+      "avty_t": "NormalAvailabiltiyTopic",
+      "pl_avail": "ON",
+      "pl_not_avail": "OFF",
+      "json_attr_t": "NormalStateTopic",
+      "unit_of_meas": "%",
+      "val_tpl": "{{value_json['RSSI']}}",
+      "ic": "mdi:information-outline",
+      "uniq_id": "77B16C_status",
+      "dev": {
+        "ids": ["MAC_ADDY_HERE"],
+        "name": "Tasmota",
+        "mdl": "Sonoff Basic",
+        "sw": "8.4.0(tasmota)",
+        "mf": "Tasmota",
+        "connections": [["mac","48:3f:da:77:1c:2e"]]
+      }
+    }
+
+    Here's the code that Tasmota Uses to get the RSSI into a raw percentage:
+    See: https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
+
+  */
+
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(11) + 332;
+
+  // Build the topic we'll publish to
+  String discoTopic = "homeassistant/sensor/" + String(mqttClientId) + "/rssi/config";
+
+  // ALlocate space for the document
+  DynamicJsonDocument discoDoc(discoMsgSize);
+
+  // Configure the name
+  discoDoc["name"] = String(haspNode) + " Status";
+  discoDoc["uniq_id"] = String(mqttClientId) + "-status";
+
+  JsonObject device = discoDoc.createNestedObject("dev");
+  device["name"] = String(haspNode);
+  device["mdl"] = "HASwitchPlate";
+  device["sw"] = String(haspVersion);
+
+  // We transmit as many device specific UIDs as we can so that HA can identify this HASP uniquely.
+  ////
+  // Create array for the MACs
+  JsonArray device_connections = device.createNestedArray("connections");
+  JsonArray device_connections_0 = device_connections.createNestedArray();
+  device_connections_0.add("mac");
+  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+  // And use the last few octets as a unique ID
+  JsonArray dev_ids = device.createNestedArray("ids");
+  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
+
+  // A topic w/ Light Weight Telemetry. Should be "ON" as long as device is powered and connected to MQTT
+  discoDoc["avty_t"] = mqttStatusTopic;
+  discoDoc["pl_avail"] = "ON";
+  discoDoc["pl_not_avail"] = "OFF";
+
+  // Tell HA where to read the status of wifi
+  discoDoc["stat_t"] = mqttWiFiStatusTopic;
+  discoDoc["val_tpl"] = "{{value_json['percent']}}";
+  discoDoc["unit_of_meas"] = "%";
+
+  // Tell HA to use this icon
+  discoDoc["ic"] = "mdi:information-outline";
+  // We can publish the misc. status info as attributes
+  discoDoc["json_attr_t"] = mqttSensorTopic;
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+  char output[1024];
+  serializeJson(discoDoc, output);
+  debugPrintln(String(F("HASP: DISCOVERY TOPIC: '")) + discoTopic);
+  debugPrintln(String(F("HASP: DISCOVERY PAYLOAD: '")) + String(output));
+  mqttClient.publish(discoTopic, String(output));
+}
+#ifdef
