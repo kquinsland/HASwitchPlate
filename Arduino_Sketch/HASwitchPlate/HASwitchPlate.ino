@@ -194,7 +194,7 @@ String mqttMotionStateTopic;                        // MQTT topic for outgoing m
 
 #ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
-String mqttLDRDiscoveryTopic;            // MQTT topic for home-assistant auto discovery
+String mqttLDRDiscoTopic;                // MQTT topic for home-assistant auto discovery
 unsigned long ldrUpdateInterval = 10000; // miliseconds to wait between LDR updates
 unsigned long ldrLastUpdateTime = 0;     // holds the milis() time of the last LDR check
 float ldrValue = 0;                      // The value from LDR
@@ -308,7 +308,8 @@ void setup()
 #endif
 
 #ifdef LDR_SUPPORT
-  ldrSetup(); // Setup LDR
+  // Configure the ADC + configure the LDR w/ HA
+  ldrSetup();
 #endif
 
   if (beepEnabled)
@@ -2693,69 +2694,78 @@ void motionUpdate()
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 #ifdef LDR_SUPPORT
 void ldrSetup()
-/*
-  Take this oppertunity to announce to home assistant that we have a LDR
-  This works because HomeAssistant supports MQTT based auto-discovery
-  See: https://www.home-assistant.io/docs/mqtt/discovery/
-
-  MQTT topic that we write the config document to must be in this format:
-  <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
-
-  
-*/
 {
-  // Topic we'll write to
-  mqttLDRDiscoveryTopic = "homeassistant/sensor/" + String(mqttClientId) + "/ldr/config";
-
   /*
   * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
   * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR but to save
   * users the trouble of having to further customize the sensor in HA, we claim to be of class 'illuminance'
-  * 
-  * The JSON that we send to HA should look like this:
-      {
-          "name": "$haspNode",
-          "unique_id":"$mqttClientId",
-          "state_topic":"$mqttLDRStateTopic",
-          "device_class" "illuminance",
-          "unit_of_measurement": "volts",
-          "value_template": "{{ value_json.ldr_value}}"
-      }
-    // TODO: move to ArduinoJSON 
-    // TODO: compact keys
-  */
-
-  //mqttStateTopic = "hasp/" + String(haspNode) + "/state";
-
-  // Configuration document. Start with the name
-  String ldrConfigPayload = "{\"name\":\"" + String(haspNode) + "\",";
-
-  // Add the MAC with the name to make a unique_id
-  ldrConfigPayload += String("\"unique_id\":\"" + mqttClientId + "\",");
-
-  // Then tell HA what topic it can get the LDR state from
-  ldrConfigPayload += String("\"state_topic\":\"" + mqttLDRStateTopic + "\",");
-
-  /*
-  * NOTE: When a device claims to be be of class 'illuminance' the units it's *supposed* to provide are 
-  * in lx or lm. I have no way to derive the lux/luminance values from the voltage from the LDR so we claim
-  * to be from that class, but override the unit of measure to be accurate to our abilities
+  * but override the unit of measure to be accurate to our abilities.
   * 
   * See: https://www.home-assistant.io/integrations/sensor/#device-class
+  
+    The JSON that we send to HA should look like this:
+    // TODO: move to ArduinoJSON 
+    // TODO: compact keys
+
+        {
+          "name": "$haspNode",
+          "unique_id": "$mqttClientId",
+          "state_topic": "$mqttLDRStateTopic",
+          "device_class": "illuminance",
+          "unit_of_measurement": "volts",
+          "value_template": "{{ value_json.ldr_value}}",
+          "dev": {
+            "name": "plate01",
+            "mdl": "HASwitchPlate",
+            "sw": "0.40",
+            "connections": [
+              ["mac", "48:3f:da:77:1c:2e"]
+            ]
+          }
+        }
   */
-  ldrConfigPayload += String("\"device_class\": \"illuminance\",");
-  ldrConfigPayload += String("\"unit_of_measurement\": \"volt\",");
+  // Topic we'll write to
+  mqttLDRDiscoTopic = "homeassistant/sensor/" + mqttClientId + "/ldr/config";
 
-  // Last, tell HomeAssistant how to parse the value from the payload in the topic ^
-  // "value_template": "{{ value_json.ldr_value}}"
-  ldrConfigPayload += String("\"value_template\": \"{{ value_json.ldr_value}}\"");
+  // Space we need to allocate for the disco payload
+  const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(7) + 260;
+  DynamicJsonDocument discoDoc(discoMsgSize);
 
-  ldrConfigPayload += "}";
+  // Use the user-configuerd name to drive the name of this component
+  discoDoc["name"] = String(haspNode) + String(" LDR");
+  discoDoc["unique_id"] = String(haspNode) + String("-ldr-01");
 
-  debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoveryTopic));
-  debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(ldrConfigPayload));
+  // Tell HA how to check the LDR state
+  discoDoc["state_topic"] = mqttLDRStateTopic;
 
-  mqttClient.publish(mqttLDRDiscoveryTopic, ldrConfigPayload);
+  // Tell HA how to parse the value payloe
+  discoDoc["value_template"] = "{{ value_json.ldr_value}}";
+
+  // Tell HA that we're a light measure device, reporting in volts
+  discoDoc["device_class"] = "illuminance";
+  discoDoc["unit_of_measurement"] = "volts";
+
+  // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
+  //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
+  //    payload per button/relay/LED is *also* sent. For now, though, we just stick w/ the full payload per led.
+  JsonObject device = discoDoc.createNestedObject("dev");
+  device["name"] = String(haspNode);
+  device["mdl"] = "HASwitchPlate";
+  device["sw"] = String(haspVersion);
+
+  // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
+  JsonArray device_connections = device.createNestedArray("connections");
+  JsonArray device_connections_0 = device_connections.createNestedArray();
+  device_connections_0.add("mac");
+  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+  char output[1024];
+  serializeJson(discoDoc, output);
+  debugPrintln(String(F("LDR: DISCOVERY TOPIC: '")) + String(mqttLDRDiscoTopic));
+  debugPrintln(String(F("LDR: DISCOVERY PAYLOAD: '")) + String(output));
+
+  mqttClient.publish(mqttLDRDiscoTopic, String(output));
 }
 void ldrUpdate()
 /* Checks the LDR value on intervals configured by ldrUpdateInterval.
@@ -2838,58 +2848,25 @@ void announcePixelsToHA()
 
 
   The config payload is ... a bit more complex, especially for RGB lights as color temp / and RGB color make
-    thing significantly more complex compares to 'on' and 'off'. Additionally, we'll need to send this autoconfig
-    document *per pixel* to give HA the ability to control each LED individually. This complicates things, but
-    ultimately makes for a more powerful/useful mod to the HASP. A scene / group of lights can be made in HA to
-    paper over this and make the pixel bar behave as one light.
+    thing significantly more complex compared to a simple 'on' and 'off' deviice. Additionally, we'll need to
+    send this autoconfig document *per pixel* to give HA the ability to control each LED individually.
+    This complicates things, but ultimately makes for a more powerful/useful mod to the HASP. 
+    A scene / group of lights can be made in HA to paper over this and make the pixel bar behave as one light
+    if that's needed.
 
-  FastLED does support a variety of effects, but I'll omit them for now. If there's room in the code and
-    enough left over CPU to spare, they may be worth adding.
-    
+  Home Assistant and FastLED do support a variety of effects for the pixels, but I'm not convinced of their 
+    value in this application. If there's room in the code and enough left over CPU to spare i may recnosider.
+
   MQTT topic that we write the config document to must be in this format:
     <discovery_prefix>/<component>/[<node_id>/]<object_id>/config
 
   Because we want to express multiple objects on one node, we'll use a pattern that looks like this:
-    <discovery_prefix>/light/$HASP-ID/$pixel_number/config
-  
-  The payload will look something like this:
-    Note: ~ is the base topic
+    <discovery_prefix>/light/$HASP-ID/$pixelNumber/config
 
   To save space, HomeAssistant supports 'minified' keys.
   See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
 
-
-  MODEL (from tasmota)
-    {
-      "name": "Tasmota Tasmota",
-      "uniq_id": "771C2E_LI_1",
-      "dev": {
-        "name": "plate01",
-        "mdl": "HASwitchPlate",
-        "ws": "0.40",
-        "connections": [
-          ["mac", "48:3f:da:77:1c:2e"]
-        ]
-      },
-      "stat_t": "tele/tasmota_771C2E/STATE",
-      "avty_t": "tele/tasmota_771C2E/LWT",
-      "pl_avail": "Online",
-      "pl_not_avail": "Offline",
-      "cmd_t": "cmnd/tasmota_771C2E/POWER",
-      "val_tpl": "{{value_json.POWER}}",
-      "pl_off": "OFF",
-      "pl_on": "ON",
-      "bri_cmd_t": "cmnd/tasmota_771C2E/Dimmer",
-      "bri_stat_t": "tele/tasmota_771C2E/STATE",
-      "bri_scl": 100,
-      "on_cmd_type": "brightness",
-      "bri_val_tpl": "{{value_json.Dimmer}}",
-      "rgb_cmd_t": "cmnd/tasmota_771C2E/Color2",
-      "rgb_stat_t": "tele/tasmota_771C2E/STATE",
-      "rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
-    }
-
-  MINE:
+  Here is the JSON that is sent.
     {
     "name": "plate01 Pixel 0",
     "unique_id": "plate01-px-0",
@@ -2917,34 +2894,32 @@ void announcePixelsToHA()
     "on_cmd_type": "brightness"
   }
 
-
   */
 
   // See: https://arduinojson.org/v6/assistant/
   const size_t discoMsgSize = JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(4) + JSON_OBJECT_SIZE(17) + 638;
 
-  // TODO: remove the stuff that didn't work from below & clean up the code in general
+  // Generate the discovery topic for *this* pixel.
   for (uint8_t i = 0; i < NUM_LEDS; i++)
   {
-    // Generate the discovery topic for *this* pixel.
     // Note: tried snprintf() byt it always crashed ;/
     String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/pixel_" + String(i) + "/config";
-
     DynamicJsonDocument discoDoc(discoMsgSize);
-
-    // Tell HA to use templates to encode/decode rather than use the exact JSON payloads that HA supports
 
     // Configure name and unique ID for *this pixel*. We'll use a common device name in the device obj
     discoDoc["name"] = String(haspNode) + " Pixel " + String(i);
     discoDoc["unique_id"] = String(haspNode) + "-px-" + String(i);
 
     // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
+    // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
+    //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
+    //    payload per button/relay/LED is *also* sent. For now, though, we just stick w/ the full payload per led.
     JsonObject device = discoDoc.createNestedObject("dev");
     device["name"] = String(haspNode);
     device["mdl"] = "HASwitchPlate";
     device["sw"] = String(haspVersion);
 
-    // One of the easiest ways to indicate single device is to use the MAC
+    // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
     JsonArray device_connections = device.createNestedArray("connections");
     JsonArray device_connections_0 = device_connections.createNestedArray();
     device_connections_0.add("mac");
@@ -2955,19 +2930,19 @@ void announcePixelsToHA()
     discoDoc["pl_avail"] = "ON";
     discoDoc["pl_not_avail"] = "OFF";
 
-    // Tell HA how to command and query us. Everything goes to one of two topics
+    // Tell HA how to command and query us. Every 'change state' payload goes to one topic.
     discoDoc["cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
-
     // set RGB color
     discoDoc["rgb_cmd_t"] = mqttPixelsBaseTopic + "/cmnd";
 
+    // And likewise, all inquiries as to the state are read from one topic
     // Query RGB state
     discoDoc["rgb_stat_t"] = mqttPixelsStateTopic;
 
     // Tell HA how to decipher the state payload in order to get the...
     //////
     // ... on/off status of the LED
-    //discoDoc["val_tpl"] = "{{value_json.s['" + String(i) + "']}}";
+    // TODO: consider wrapping w/ defensive approach: {%if value_json.p is defined %}...
     discoDoc["stat_val_tpl"] = "{{value_json.s['" + String(i) + "']}}";
 
     // ... current brightness of the LED
@@ -2982,96 +2957,17 @@ void announcePixelsToHA()
     discoDoc["pl_off"] = "{'v':1,'c':{'" + String(i) + "':'off'}}";
     discoDoc["pl_on"] = "{'v':1,'c':{'" + String(i) + "':'on'}}";
 
-    // ... set the brightness of a given pixel
-    //DISABLE as: extra keys not allowed @ data['brightness_template']
-    //discoDoc["bri_tpl"] = "{{%set x={'v':1,'p':{'" + String(i) + "':[red,green,blue]}}%}{{x|tojson}}";
-
     // ... set the color for a given pixel
+    // Use 'set' to create a python dict and then seend that as JSON
     discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'" + String(i) + "':{'rgb':[red,green,blue]}}}%}{{x|tojson}}";
 
     // Tell HA that the MAX brightness for the LED is 255
     discoDoc["bri_scl"] = 255;
 
-    // Tell HA to send payload ON first which will immediately restore the color
+    // Tell HA to send payload ON first which will immediately restore the color.
+    // As soon as the color is restored, the state will be updated and HA will immediately show
+    //  the color that was displayed prior to turning the pixel off
     discoDoc["on_cmd_type"] = "first";
-
-    // All commands/inquiries go to the cmnd topic... even 'set color' commands
-
-    // TRY HSV for per-pixel color
-    // discoDoc["hs_command_topic"] = mqttPixelsBaseTopic + "/cmnd";
-    // discoDoc["hs_state_topic"] = mqttPixelsStateTopic;
-
-    // discoDoc["hs_command_temp"] = "{{%set x={'v':1,'p':{'" + String(i) + "':{'hsv':[hue, saturation]}}%}{{x|tojson}}";
-
-    //"rgb_val_tpl": "{{value_json.Color.split(',')[0:3]|join(',')}}"
-
-    // We use the 'status' topic as it's already set w/ on/off as needed
-    //TODO: is retention on this going ot be an issue?
-    //TODO: If i want the LEDs to operate independent of the screen, this is a poor choice of topics?
-
-    // discoDoc["pl_not_avail"] = "OFF";
-    // discoDoc["pl_avail"] = "ON";
-    // Tell HA how to check if we're available or not
-    // WHen i tried to use the availability object, logs were FULL of errors:
-    // 432, in validate_mapping raise er.MultipleInvalid(errors) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['availability'][0]['t']
-    //discoDoc["avty_t"] = mqttStatusTopic;
-
-    // Tell HA how to command us
-    //discoDoc["cmd_t"] = "~cmnd";
-    //rgb_command_topic
-    //discoDoc["rgb_cmd_t"] = "~cmnd";
-    //Disabled as i was getting errors:
-    // uilder.py", line 432, in validate_mapping raise er.MultipleInvalid(errors) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['rgb_command_topic']
-
-    // Send a simple c = off or on to turn on/off
-    // discoDoc["cmd_off_tpl"] = "{\"v\":1,\"c\":\"off\"}";
-    // discoDoc["cmd_on_tpl"] = "{\"v\":1,\"c\":\"on\"}";
-
-    /* Tell HA how to encode the color values for a given pixel
-
-    Since we only have one command endpoint for all pixels and that endpoint wants a version obj and a pixels obj, we use
-      the 'set' function to make a small data sctructure called x which has a `v` object and a `p` object which then has
-      a key for each pixel which maps to an array of RGB values
-
-        {%set x={
-          'v':1,
-          'p':{
-              '0': [red,green,blue]
-            }
-          } 
-        %}
-
-        color0: {{x|tojson}}
-
-    */
-    //rgb_command_template
-    //discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'0':[red,green,blue]}}%}{{x|tojson}}";
-    //Disabled as: extra keys not allowed @ data['rgb_command_template']
-
-    /*
-      Tell HA how to get the on/off state for each pixel. We code the template 'defensively', making sure to check that something is defined before accessing
-      Expanded out, this is what we need to encode:
-        {%if value_json.p is defined %}
-          {%if value_json.p["0"] is defined %}
-            {%if value_json.p["0"][0] == 0 and value_json.p["0"][1] == 0 and value_json.p["0"][2] == 0%}off{%else%}on{%endif%}
-          {%endif%}
-        {%else%}off{%endif%}
-    */
-    //state_value_template
-    //discoDoc["stat_val_tpl"] = "{%if value_json.p is defined %}{%if value_json.p[\"" + String(i) + "\"] is defined %}{%if value_json.p[\"" + String(i) + "\"][0] == 0 and value_json.p[\"" + String(i) + "\"][1] == 0 and value_json.p[\"" + String(i) + "\"][2] == 0%}off{%else%}on{%endif%}{%endif%}{%else%}off{%endif%}";
-    // Disabled as ) voluptuous.error.MultipleInvalid: extra keys not allowed @ data['state_value_template']
-
-    // And set brightness... via the cmnd topic
-    //brightness_command_topic
-    //discoDoc["bri_cmd_t"] = "~cmnd";
-    // Disable as extra keys not allowed @ data['brightness_command_topic']
-
-    // Tell HA how to parse the brightness out of the state payload
-    //discoDoc["bri_tpl"] = "{%if value_json.b is defined %}{{value_json.b|int}}{%else%}0{%endif%}";
-
-    // FastLED will reuturn an int
-    //discoDoc["brightness_scale"] = String(FastLED.getBrightness());
-    // Disabled as: extra keys not allowed @ data['brightness_scale
 
     // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
     char output[1024];
