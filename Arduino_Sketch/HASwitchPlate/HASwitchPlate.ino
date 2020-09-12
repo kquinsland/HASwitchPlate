@@ -195,11 +195,11 @@ String mqttLightBrightCommandTopic;                 // MQTT topic for incoming p
 String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
 String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
 
-#ifdef RSSI_SENSOR_STATE
+#ifdef RSSI_SENSOR_SUPPORT
 String mqttWiFiStatusTopic;                     // MQTT topic for publishing WiFI signal strength
 unsigned long rssiStatusUpdateInterval = 30000; // miliseconds to wait between RSSI updates
 unsigned long rssiStatusLastUpdateTime = 0;     // holds the milis() time of the last RSSI check
-#ifdef
+#endif
 
 #ifdef LDR_SUPPORT
 String mqttLDRStateTopic;                // MQTT topic for the LDR value
@@ -515,7 +515,7 @@ void mqttConnect()
 #ifdef RSSI_SENSOR_SUPPORT
   // Topic that we'll publish wifi sensor status to
   mqttWiFiStatusTopic = "hasp/" + String(mqttClientId) + "/rssi/state";
-#ifdef
+#endif
 
   // 'general' data
   mqttSensorTopic = "hasp/" + String(haspNode) + "/sensor";
@@ -2889,15 +2889,18 @@ void announceAllToHomeAssistant()
 
 #ifdef RSSI_SENSOR_SUPPORT
   // Expose the WiFi signal quality as a sensor to HA
+  debugPrintln(F("DISCO: Announce RSSI"));
   announceRSSItoHA();
-#ifdef
+#endif
 
 #ifdef LDR_SUPPORT
-  // Configure the ADC + configure the LDR w/ HA
+  // Tell HA about the LDR
+  debugPrintln(F("DISCO: Announce LDR"));
   announceLDRtoHA();
 #endif
 
-#ifdef PIXEL_SUPPORT
+#ifdef NEOPIXEL_SUPPORT
+  debugPrintln(F("DISCO: Announce PIXELS"));
   announcePixelsToHA();
 #endif
 }
@@ -2915,47 +2918,45 @@ void announceLDRtoHA()
   * See: https://www.home-assistant.io/integrations/sensor/#device-class
   
     The JSON that we send to HA should look like this:
-    // TODO: move to ArduinoJSON 
-    // TODO: compact keys
-
-        {
-          "name": "$haspNode",
-          "unique_id": "$mqttClientId",
-          "state_topic": "$mqttLDRStateTopic",
-          "device_class": "illuminance",
-          "unit_of_measurement": "volts",
-          "value_template": "{{ value_json.ldr_value}}",
-          "dev": {
-            "ids": ["MAC_ADDY_HERE"],
-            "name": "plate01",
-            "mdl": "HASwitchPlate",
-            "sw": "0.40",
-            "connections": [
-              ["mac", "48:3f:da:77:1c:2e"]
-            ]
-          }
-        }
+    {
+      "name": "plate01 LDR",
+      "uniq_id": "plate01-ldr-01",
+      "stat_t": "hasp/plate01-483fda771c2e/ldr/state",
+      "val_tpl": "{{ value_json.ldr_value}}",
+      "dev_cla": "illuminance",
+      "unit_of_meas": "millivolt",
+      "dev": {
+        "name": "plate01",
+        "mdl": "HASwitchPlate",
+        "sw": "0.40",
+        "ids": ["771c2e"],
+        "connections": [
+          ["mac", "48:3f:da:77:1c:2e"]
+        ]
+      }
+    }
   */
+
   // Topic we'll write to
   mqttLDRDiscoTopic = "homeassistant/sensor/" + mqttClientId + "/ldr/config";
 
   // Space we need to allocate for the disco payload
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(7) + 245;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(7) + 248;
   DynamicJsonDocument discoDoc(discoMsgSize);
 
   // Use the user-configuerd name to drive the name of this component
   discoDoc["name"] = String(haspNode) + String(" LDR");
-  discoDoc["unique_id"] = String(haspNode) + String("-ldr-01");
+  discoDoc["uniq_id"] = String(haspNode) + String("-ldr-01");
 
   // Tell HA how to check the LDR state
-  discoDoc["state_topic"] = mqttLDRStateTopic;
+  discoDoc["stat_t"] = mqttLDRStateTopic;
 
   // Tell HA how to parse the value payloe
-  discoDoc["value_template"] = "{{ value_json.ldr_value}}";
+  discoDoc["val_tpl"] = "{{ value_json.ldr_value}}";
 
   // Tell HA that we're a light measure device, reporting in volts
-  discoDoc["device_class"] = "illuminance";
-  discoDoc["unit_of_measurement"] = "millivolt";
+  discoDoc["dev_cla"] = "illuminance";
+  discoDoc["unit_of_meas"] = "millivolt";
 
   // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
   //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
@@ -3499,33 +3500,31 @@ void announceRSSItoHA()
     See: https://www.home-assistant.io/docs/mqtt/discovery/#configuration-variables
 
     {
-      "name": "HaspName status",
-      "stat_t": "NormalStateTopic",
-      "avty_t": "NormalAvailabiltiyTopic",
+      "name": "plate01 Signal Strength",
+      "uniq_id": "plate01-483fda771c2e-rssi",
+      "dev": {
+        "name": "plate01",
+        "mdl": "HASwitchPlate",
+        "sw": "0.40",
+        "connections": [
+          ["mac", "48:3f:da:77:1c:2e"]
+        ],
+        "ids": ["771c2e"]
+      },
+      "avty_t": "hasp/plate01/status",
       "pl_avail": "ON",
       "pl_not_avail": "OFF",
-      "json_attr_t": "NormalStateTopic",
+      "stat_t": "hasp/plate01-483fda771c2e/rssi/state",
+      "val_tpl": "{{value_json['percent']}}",
       "unit_of_meas": "%",
-      "val_tpl": "{{value_json['RSSI']}}",
       "ic": "mdi:information-outline",
-      "uniq_id": "77B16C_status",
-      "dev": {
-        "ids": ["MAC_ADDY_HERE"],
-        "name": "Tasmota",
-        "mdl": "Sonoff Basic",
-        "sw": "8.4.0(tasmota)",
-        "mf": "Tasmota",
-        "connections": [["mac","48:3f:da:77:1c:2e"]]
-      }
+      "json_attr_t": "hasp/plate01/sensor"
     }
-
-    Here's the code that Tasmota Uses to get the RSSI into a raw percentage:
-    See: https://github.com/arendst/Tasmota/blob/f268697e54a6bc527f55ad63ac2cd37494214734/tasmota/support_wifi.ino#L60
 
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(6) + JSON_OBJECT_SIZE(11) + 332;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 359;
 
   // Build the topic we'll publish to
   String discoTopic = "homeassistant/sensor/" + String(mqttClientId) + "/rssi/config";
@@ -3534,8 +3533,8 @@ void announceRSSItoHA()
   DynamicJsonDocument discoDoc(discoMsgSize);
 
   // Configure the name
-  discoDoc["name"] = String(haspNode) + " Status";
-  discoDoc["uniq_id"] = String(mqttClientId) + "-status";
+  discoDoc["name"] = String(haspNode) + " Signal Strength";
+  discoDoc["uniq_id"] = String(mqttClientId) + "-rssi";
 
   JsonObject device = discoDoc.createNestedObject("dev");
   device["name"] = String(haspNode);
@@ -3576,4 +3575,4 @@ void announceRSSItoHA()
   debugPrintln(String(F("HASP: DISCOVERY PAYLOAD: '")) + String(output));
   mqttClient.publish(discoTopic, String(output));
 }
-#ifdef
+#endif
