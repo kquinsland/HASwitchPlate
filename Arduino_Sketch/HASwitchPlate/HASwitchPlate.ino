@@ -2903,6 +2903,9 @@ void announceAllToHomeAssistant()
   debugPrintln(F("DISCO: Announce PIXELS"));
   announcePixelsToHA();
 #endif
+
+  // Tell HA about the LCD backlight
+  announceLCDBackLightToHA();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3575,3 +3578,76 @@ void announceRSSItoHA()
   mqttClient.publish(discoTopic, String(output));
 }
 #endif
+
+void announceLCDBackLightToHA()
+{
+  /*
+    The LCD Backlight can be turnd on/off and dimmed. We announce this to ability to HomeAssistant so the LCD Backlight can be turned on/off/dimmed
+      {
+        "name": "plate01 Backlight",
+        "unique_id": "plate01-backlight",
+        "dev": {
+          "ids": ["77B16C"],
+          "name": "plate01",
+          "mdl": "HASwitchPlate",
+          "sw": "0.40",
+          "connections": [
+            ["mac", "48:3f:da:77:1c:2e"]
+          ]
+        },
+        "avty_t": "hasp/plate01/status",
+        "pl_avail": "ON",
+        "pl_not_avail": "OFF",
+        "cmd_t": "hasp/plate01/light/switch",
+        "stat_t": "hasp/plate01/light/state",
+        "bri_stat_t": "hasp/plate01/brightness/state",
+        "bri_cmd_t": "hasp/plate01/brightness/set",
+        "bri_scl": 255
+      }
+  */
+
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 354;
+  // TODO: re-generate the sizes for ALL documents based on the MAX length of the mqttClientID and haspNode
+
+  String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/backlight/config";
+  DynamicJsonDocument discoDoc(discoMsgSize);
+  discoDoc["name"] = String(haspNode) + " LCD Backlight";
+  discoDoc["unique_id"] = String(haspNode) + "-lcd-backlight";
+
+  // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
+  // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
+  //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
+  //    payload per button/relay/LED is *also* sent. For now, though, we just stick w/ the full payload per led.
+  JsonObject device = discoDoc.createNestedObject("dev");
+  device["name"] = String(haspNode);
+  device["mdl"] = "HASwitchPlate";
+  device["sw"] = String(haspVersion);
+
+  JsonArray dev_ids = device.createNestedArray("ids");
+  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
+
+  // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
+  JsonArray device_connections = device.createNestedArray("connections");
+  JsonArray device_connections_0 = device_connections.createNestedArray();
+  device_connections_0.add("mac");
+  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+  // use the topic that HASP uses to indicate state as our availability indicator
+  discoDoc["avty_t"] = mqttStatusTopic;
+  discoDoc["pl_avail"] = "ON";
+  discoDoc["pl_not_avail"] = "OFF";
+
+  discoDoc["cmd_t"] = mqttLightCommandTopic;
+  discoDoc["stat_t"] = mqttLightStateTopic;
+  discoDoc["bri_stat_t"] = mqttLightBrightStateTopic;
+  discoDoc["bri_cmd_t"] = mqttLightBrightCommandTopic;
+  discoDoc["bri_scl"] = 255;
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+  char output[1024];
+  serializeJson(discoDoc, output);
+  debugPrintln(String(F("BACKLIGHT: DISCOVERY TOPIC: '")) + discoTopic);
+  debugPrintln(String(F("BACKLIGHT: DISCOVERY PAYLOAD: '")) + String(output));
+  mqttClient.publish(discoTopic, String(output));
+}
