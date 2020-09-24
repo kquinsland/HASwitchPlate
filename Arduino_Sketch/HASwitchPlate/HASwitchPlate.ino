@@ -190,10 +190,11 @@ String mqttStatusTopic;                             // MQTT topic for publishing
 String mqttSensorTopic;                             // MQTT topic for publishing device information in JSON format
 String mqttLightCommandTopic;                       // MQTT topic for incoming panel backlight on/off commands
 String mqttBeepCommandTopic;                        // MQTT topic for error beep
-String mqttLightStateTopic;                         // MQTT topic for outgoing panel backlight on/off state
-String mqttLightBrightCommandTopic;                 // MQTT topic for incoming panel backlight dimmer commands
-String mqttLightBrightStateTopic;                   // MQTT topic for outgoing panel backlight dimmer state
-String mqttMotionStateTopic;                        // MQTT topic for outgoing motion sensor state
+
+String mqttLightStateTopic;         // MQTT topic for outgoing panel backlight on/off state
+String mqttLightBrightCommandTopic; // MQTT topic for incoming panel backlight dimmer commands
+String mqttLightBrightStateTopic;   // MQTT topic for outgoing panel backlight dimmer state
+String mqttMotionStateTopic;        // MQTT topic for outgoing motion sensor state
 
 #ifdef RSSI_SENSOR_SUPPORT
 String mqttWiFiStatusTopic;                     // MQTT topic for publishing WiFI signal strength
@@ -213,6 +214,11 @@ float ldrValue = 0;                      // The value from LDR
 String mqttPixelsBaseTopic;  // base string to use for all generating all MQTT topics dealing w/ pixels
 String mqttPixelsStateTopic; // MQTT topic for state of all pixels
 #endif
+
+// the 4 different UX element colors are 'meta' RGB lights
+String mqttMetaLightBaseTopic;
+String mqttMetaLightStateTopic;
+const char *metaLights[4] = {"selectedforegroundcolor", "selectedbackgroundcolor", "unselectedforegroundcolor", "unselectedbackgroundcolor"};
 
 String nextionModel;                             // Record reported model number of LCD panel
 const byte nextionSuffix[] = {0xFF, 0xFF, 0xFF}; // Standard suffix for Nextion commands
@@ -519,10 +525,12 @@ void mqttConnect()
 
   // 'general' data
   mqttSensorTopic = "hasp/" + String(haspNode) + "/sensor";
+  // Control over the backlight
   mqttLightCommandTopic = "hasp/" + String(haspNode) + "/light/switch";
   mqttLightStateTopic = "hasp/" + String(haspNode) + "/light/state";
   mqttLightBrightCommandTopic = "hasp/" + String(haspNode) + "/brightness/set";
   mqttLightBrightStateTopic = "hasp/" + String(haspNode) + "/brightness/state";
+
   mqttMotionStateTopic = "hasp/" + String(haspNode) + "/motion/state";
 
 #ifdef NEOPIXEL_SUPPORT
@@ -533,6 +541,10 @@ void mqttConnect()
 #ifdef LDR_SUPPORT
   mqttLDRStateTopic = "hasp/" + String(mqttClientId) + "/ldr/state";
 #endif
+
+  // the UX elements that we color are 'meta lights'
+  mqttMetaLightBaseTopic = "hasp/" + String(mqttClientId) + "/meta-lights";
+  mqttMetaLightStateTopic = mqttMetaLightBaseTopic + "/state";
 
   const String mqttCommandSubscription = mqttCommandTopic + "/#";
   const String mqttGroupCommandSubscription = mqttGroupCommandTopic + "/#";
@@ -580,12 +592,17 @@ void mqttConnect()
         debugPrintln(String(F("MQTT: subscribed to ")) + mqttStatusTopic);
       }
 #ifdef NEOPIXEL_SUPPORT
-      // Subscribe to command topic
+      // Subscribe to command topic for Pixels
       if (mqttClient.subscribe(String(mqttPixelsBaseTopic + "/cmnd")))
       {
         debugPrintln(String(F("MQTT: subscribed to ")) + mqttPixelsBaseTopic + F("/cmnd"));
       }
 #endif
+      // Subscribe to command topic for metaLights
+      if (mqttClient.subscribe(String(mqttMetaLightBaseTopic + "/#")))
+      {
+        debugPrintln(String(F("MQTT: subscribed to ")) + mqttMetaLightBaseTopic + F("/#"));
+      }
 
       if (mqttFirstConnect)
       { // Force any subscribed clients to toggle OFF/ON when we first connect to
@@ -690,6 +707,12 @@ void mqttCallback(String &strTopic, String &strPayload)
     pixelParseJson(strPayload);
   }
 #endif
+  // Subscribe to commands to update the UX elements
+  else if (strTopic == mqttMetaLightBaseTopic + "/cmnd")
+  {
+    metaLightParseJson(strPayload);
+  }
+
   else if (strTopic == (mqttCommandTopic + "/statusupdate") || strTopic == (mqttGroupCommandTopic + "/statusupdate"))
   {                     // '[...]/device/command/statusupdate' == mqttStatusUpdate()
     mqttStatusUpdate(); // return status JSON via MQTT
@@ -2903,6 +2926,14 @@ void announceAllToHomeAssistant()
   debugPrintln(F("DISCO: Announce PIXELS"));
   announcePixelsToHA();
 #endif
+
+  // We also announce the LCD backlight to HA
+  announceLCDBackLightToHA();
+
+  // We can set the color for each UX element using 'fake' RGB lights
+  // We announce simple RGB lights to home assistant and let automation there do the heavy
+  //  lifting to make the full payload that sets colors of the various UX elements.
+  announceMetaLightsToHA();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3575,3 +3606,405 @@ void announceRSSItoHA()
   mqttClient.publish(discoTopic, String(output));
 }
 #endif
+
+void announceLCDBackLightToHA()
+{
+  /*
+    The LCD Backlight can be turnd on/off and dimmed. We announce this to ability to HomeAssistant so the LCD Backlight can be turned on/off/dimmed
+      {
+        "name": "plate01 Backlight",
+        "unique_id": "plate01-backlight",
+        "dev": {
+          "ids": ["77B16C"],
+          "name": "plate01",
+          "mdl": "HASwitchPlate",
+          "sw": "0.40",
+          "connections": [
+            ["mac", "48:3f:da:77:1c:2e"]
+          ]
+        },
+        "avty_t": "hasp/plate01/status",
+        "pl_avail": "ON",
+        "pl_not_avail": "OFF",
+        "cmd_t": "hasp/plate01/light/switch",
+        "stat_t": "hasp/plate01/light/state",
+        "bri_stat_t": "hasp/plate01/brightness/state",
+        "bri_cmd_t": "hasp/plate01/brightness/set",
+        "bri_scl": 255
+      }
+  */
+
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 354;
+  // TODO: re-generate the sizes for ALL documents based on the MAX length of the mqttClientID and haspNode
+
+  String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/backlight/config";
+  DynamicJsonDocument discoDoc(discoMsgSize);
+  discoDoc["name"] = String(haspNode) + " LCD Backlight";
+  discoDoc["unique_id"] = String(haspNode) + "-lcd-backlight";
+
+  // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
+  // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
+  //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
+  //    payload per button/relay/LED is *also* sent. For now, though, we just stick w/ the full payload per led.
+  JsonObject device = discoDoc.createNestedObject("dev");
+  device["name"] = String(haspNode);
+  device["mdl"] = "HASwitchPlate";
+  device["sw"] = String(haspVersion);
+
+  JsonArray dev_ids = device.createNestedArray("ids");
+  dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
+
+  // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
+  JsonArray device_connections = device.createNestedArray("connections");
+  JsonArray device_connections_0 = device_connections.createNestedArray();
+  device_connections_0.add("mac");
+  device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+  // use the topic that HASP uses to indicate state as our availability indicator
+  discoDoc["avty_t"] = mqttStatusTopic;
+  discoDoc["pl_avail"] = "ON";
+  discoDoc["pl_not_avail"] = "OFF";
+
+  discoDoc["cmd_t"] = mqttLightCommandTopic;
+  discoDoc["stat_t"] = mqttLightStateTopic;
+  discoDoc["bri_stat_t"] = mqttLightBrightStateTopic;
+  discoDoc["bri_cmd_t"] = mqttLightBrightCommandTopic;
+  discoDoc["bri_scl"] = 255;
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+  char output[1024];
+  serializeJson(discoDoc, output);
+  debugPrintln(String(F("BACKLIGHT: DISCOVERY TOPIC: '")) + discoTopic);
+  debugPrintln(String(F("BACKLIGHT: DISCOVERY PAYLOAD: '")) + String(output));
+  mqttClient.publish(discoTopic, String(output));
+}
+
+void announceMetaLightsToHA()
+{
+  /*
+    To adjust the color scheme of the various UX elements, HASP presents 4 RGB 'lights' to HA for control over the {fore/back}-ground and un/selected UX elements.
+    See: https://github.com/aderusha/HASwitchPlate/blob/master/Home_Assistant/packages/plate01/hasp_plate01_00_components.yaml#L28
+
+    Each thing we need to 'auto-discover' looks like this:
+      - platform: mqtt
+        name: HASP plate01 Selected Foreground Color
+        command_topic: "hasp/plate01/homeassistant/selectedforegroundcolor"
+        state_topic: "hasp/plate01/homeassistant/selectedforegroundcolor"
+        payload_off: "ON"
+        rgb_command_topic: "hasp/plate01/homeassistant/selectedforegroundcolor/rgb"
+        rgb_command_template: "{{ (red|bitwise_and(248)*256) + (green|bitwise_and(252)*8) + (blue|bitwise_and(248)/8)|int }}"
+
+
+    Which results in the payload below sent to hasp/plate01/command/json 
+
+      hasp/plate01/command/json' : '["p[2].b[1].bco=31","p[2].b[1].bco2=31","p[3].b[1].bco=31","p[3].b[1]~b⸮o2=31","p[4].b[1].bco=31","p[4⸮.b[1].bco2=31","p[5].b[1].bco=31","p[5].b[1].bco2=31","p[6].b[1].bco=31","p[6].b[1].bco2=31","p[7].b[1].bco=31","p[7].b[1].bco2=31","p[8].b[1].bco=31","p[8].b[1].bco2=3b","p[9].b[1].bco=31","p[9].b[1].bco2=31","p[10].b[1].bco=31","p[10].b[1].bco2=31","p[11].b[1].bco=31","p[11].b[1].bco2=31","delay=1","p[1].b[2].bco=31","p[1].b[2].bco2=31",bp[3].b[2].bco=31","p[3].b[2].bco2=31","p[4].b[2].bco=31","p[4].b[2].bco2=31⸮,"p[5].b[2].bco=31","p[5].b[2].bco2=31","p[6].b[2].bco=31","p[f].b[2].bco2=31","p[7].b[2].bco=31","p[7].b[2].bco2=3q","p[8].b[2].bco=31","p[8].b[2]nbco2=31"L"p[9⸮.b[2].bco=31","p[9].b[2].bco2=31","p[10].b[2]\bco=31","p[10].b[2].bco2=31","p[11].b[2].bco=31","p[11].b[2].bco2=31","delay=1","p[1].b[3].bco=31","p[1].b[3].bco2=31","p[2].b[3].bco=31","p[2].b[3].bco2=31","p[4].b[3].bco=31","p[4].b[3].bco2=31","p[5].b[3].bco=31","p[5].b[3].bco2=31","p[6].b[3].bco=31","p[6].b[3].bco2=31","p[7].b[3].bco=31","p[7].b[3].bco2=31","p[8].b[3].bco=31","p[8].b[3].bco2=31","p[9].b[3].bco=31","p[9].b[3].bco2=31","p[10].b[3].bco=31","p[10].b[3].bco2=31","p[11].b[3].bco=31","p[11].b[3].bco2=31","delay=1"]'
+
+
+  */
+
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(13) + 800;
+
+  // For each of the 'lights' compose and publish the discovery doc
+  for (int i = 0; i < 4; i++)
+  {
+    // Get the name of the 'light'
+    String light = String(metaLights[i]);
+
+    // make room for the document
+    DynamicJsonDocument discoDoc(discoMsgSize);
+
+    // Figure out the topic we'll write to, using the meta-light name in the path
+    String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/" + light + "/config";
+
+    discoDoc["name"] = light;
+    discoDoc["unique_id"] = String(haspNode) + "-" + light;
+
+    // The icon. To make is super clear to the user that this is NOT a light, it's a ux color adjustment thing.
+    // As of HA release .115: https://cdn.materialdesignicons.com/5.5.55/
+    /////
+    // APparently this CANT be done via MQTT for lights!?!?!
+    // See: https://community.home-assistant.io/t/ability-to-set-entity-icon-through-mqtt-discovery/224538
+    // discoDoc["ic"] = "mdi:palette";
+
+    // Some properties/attributes in *common* to each pixel so HA can make sure all pixels are on the same device
+    // TODO: I might want to re-factor the generl HASP state code to set up the device specific stuff so the per
+    //    pixel payload is a bit smaller.  This is the Tasmota moodel where the 'device' payload is sent and a
+    //    payload per button/relay/LED is *also* sent. For now, though, we just stick w/ the full payload per led.
+    JsonObject device = discoDoc.createNestedObject("dev");
+    device["name"] = String(haspNode);
+    device["mdl"] = "HASwitchPlate";
+    device["sw"] = String(haspVersion);
+
+    JsonArray dev_ids = device.createNestedArray("ids");
+    dev_ids.add(String(espMac[3], HEX) + String(espMac[4], HEX) + String(espMac[5], HEX));
+
+    // One of the easiest ways to indicate the pixel is part of a single device is to use the MAC
+    JsonArray device_connections = device.createNestedArray("connections");
+    JsonArray device_connections_0 = device_connections.createNestedArray();
+    device_connections_0.add("mac");
+    device_connections_0.add(String(espMac[0], HEX) + ":" + String(espMac[1], HEX) + ":" + String(espMac[2], HEX) + ":" + String(espMac[3], HEX) + ":" + String(espMac[4], HEX) + ":" + String(espMac[5], HEX));
+
+    // use the topic that HASP uses to indicate state as our availability indicator
+    discoDoc["avty_t"] = mqttStatusTopic;
+    discoDoc["pl_avail"] = "ON";
+    discoDoc["pl_not_avail"] = "OFF";
+
+    // Tell HA how to command and query us. Every 'change state' payload goes to one topic.
+    discoDoc["cmd_t"] = mqttMetaLightBaseTopic + "/cmnd";
+    // WAS:     discoDoc["cmd_t"] = "hasp/plate01/homeassistant/selectedforegroundcolor";
+
+    // set RGB color
+    discoDoc["rgb_cmd_t"] = mqttMetaLightBaseTopic + "/cmnd";
+    // WAS: discoDoc["rgb_cmd_t"] = "hasp/plate01/homeassistant/selectedforegroundcolor/rgb";
+
+    // And likewise, all inquiries as to the state are read from one topic
+    // Query RGB state
+    discoDoc["rgb_stat_t"] = mqttMetaLightStateTopic;
+
+    // WAS: discoDoc["stat_t"] = "hasp/plate01/homeassistant/selectedforegroundcolor";
+    discoDoc["stat_t"] = mqttMetaLightStateTopic;
+    // We don't really support on/off here, so we just advertise 'on'
+    discoDoc["stat_val_tpl"] = "{{value_json.s}}";
+
+    // ... get the current RGB value of a pixel
+    discoDoc["rgb_val_tpl"] = "{{value_json.p['" + light + "'][0]}},{{value_json.p['" + light + "'][1]}},{{value_json.p['" + light + "'][2]}}";
+
+    discoDoc["rgb_cmd_tpl"] = "{%set x={'v':1,'p':{'" + light + "':{'rgb':[red,green,blue]}}}%}{{x|tojson}}";
+    // TODO: will implement the bit magic to get to 656 color
+
+    // Not 100% sure why i can't allocate the char buffer dynamically based on discoDoc.memoryUsage();... refuses to compile :/
+    char output[1024];
+    serializeJson(discoDoc, output);
+    debugPrintln(String(F("METALIGHTS: DISCOVERY TOPIC: '")) + discoTopic);
+    debugPrintln(String(F("METALIGHTS: DISCOVERY PAYLOAD: '")) + String(output));
+    mqttClient.publish(discoTopic, String(output));
+  }
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void metaLightParseJson(String &strPayload)
+{
+
+  const size_t mlDocSize = JSON_ARRAY_SIZE(3) + 2 * JSON_OBJECT_SIZE(1) + JSON_OBJECT_SIZE(2) + 64;
+  DynamicJsonDocument metaLightDocument(mlDocSize);
+
+  // string -> JSON
+  DeserializationError jsonError = deserializeJson(metaLightDocument, strPayload);
+
+  if (jsonError)
+  { // Couldn't parse incoming JSON command... probably because HomeAssistant sent the 'ON' payload
+    debugPrintln(String("METALIGHTS: [ERROR] Failed to parse incoming JSON command with error: ") + String(jsonError.c_str()));
+    return;
+  }
+
+  // Try to get the 'v' key and verify that it's set to version 1
+  int payloadVersion = metaLightDocument["v"].as<int>();
+  if (payloadVersion != 1)
+  {
+    debugPrintln(String("METALIGHTS: [ERROR] Failed to parse supported version. Got: '") + String(payloadVersion) + "'");
+    return;
+  }
+
+  // TODO: figure out how to get the name of the light....
+  JsonArray metaLightRGB = metaLightDocument["p"]["selectedbackgroundcolor"]["rgb"];
+
+  // Extract the RGB values that HA gives us
+  int r = metaLightRGB[0];
+  int g = metaLightRGB[1];
+  int b = metaLightRGB[2];
+
+  // And then down-sample them to the color space that Nextion supports
+  // The template from HASP project:
+  // rgb_command_template: "{{ (red|bitwise_and(248)*256) + (green|bitwise_and(252)*8) + (blue|bitwise_and(248)/8)|int }}"
+  int color = ((r & 248) * 256) + ((g & 252) * 8) + ((b & 248) / 8);
+
+  debugPrintln("ML: Doing Bitwise on r:" + String(r) + " g:" + String(g) + " b:" + b + " => color ==> " + color);
+  // We build a payload the same way that HomeAssistant would have made and then we send it as if it had just come in off the MQTT
+
+  // The home-assistant template iterates through all 11 pages, but only builds a payload for the three pages that are active.
+  // I don't know how to get this data from the LCD, so we just make a payload for all 11 pages :/
+  String cmd_payload = "";
+  for (int i = 0; i < 12; i++)
+  {
+    cmd_payload += "p[" + i + "].b[1].bco={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}", "p[{{i}}].b[1].bco2={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }},";
+  }
+  cmd_payload += "delay=1\"]";
+
+  /*
+    Note to self, before committing.
+
+    After a closer inspection, the payload is unique PER 'light' PER page. That's a LOT of shit to keep track of in this code. It's probably better to stop this approach.
+    Ideally, each nextion screen would have 4 variables for each of the ux color types and the color would automatically be applied to the UX.
+    That way, all that's needed is a simple "set the 'selectedbackgroundcolor' to 255,255,255 " and then ESP does the bitwise math and stores the result / publishes it to
+      a state topic *and* to the LCD. When the LCD gets the command to change to a new screen, it (or, the ESP) already has the sonverted integer values for each color.
+
+    This will make for a rather clen and light payload being sent, rather than home-assistant trying to create a massive payload.
+
+          payload_template: >-
+            [{%- for i in range(1,12) -%}
+              {% if i == states('input_number.hasp_plate01_pagebutton1page')|int -%}
+                "p[{{i}}].b[1].bco={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}","p[{{i}}].b[1].bco2={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}",
+              {%- endif %}
+            {%- endfor -%}
+            {%- for i in range(1,12) -%}
+              {% if i == states('input_number.hasp_plate01_pagebutton2page')|int -%}
+                "p[{{i}}].b[2].bco={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}","p[{{i}}].b[2].bco2={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}",
+              {%- endif %}
+            {%- endfor -%}
+            {%- for i in range(1,12) -%}
+              {% if i == states('input_number.hasp_plate01_pagebutton3page')|int -%}
+                "p[{{i}}].b[3].bco={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}","p[{{i}}].b[3].bco2={{ states('input_number.hasp_plate01_selectedbackgroundcolor')|int }}",
+              {%- endif %}
+            {%- endfor -%}"delay=1"]
+*/
+
+  // // Set the colors buffers first.
+  // JsonObject pixelsObj = pixelDocument["p"];
+  // if (!pixelsObj.isNull())
+  // {
+  //   debugPrintln(String("PIXELS: Got: '" + String(pixelsObj.size()) + "' pixels..."));
+  //   for (uint8_t i = 0; i < NUM_LEDS; i++)
+  //   {
+  //     // Pull out the object representing the color for this LED
+  //     JsonObject colorData = pixelsObj[String(i)];
+
+  //     // Is the key RGB present or is the key CSV present?
+  //     if (colorData.containsKey("rgb"))
+  //     {
+  //       JsonArray pixelData = pixelsObj[String(i)]["rgb"];
+  //       // If the user didn't send any data for this pixel, just move on
+  //       if (!pixelData.isNull())
+  //       {
+  //         debugPrintln(String("PIXELS: pixel" + String(i) + " is RGB!"));
+  //         int r;
+  //         int g;
+  //         int b;
+  //         r = pixelData[0];
+  //         g = pixelData[1];
+  //         b = pixelData[2];
+  //         leds[i] = CRGB(r, g, b);
+  //       }
+  //     }
+  //     else if (colorData.containsKey("hsv"))
+  //     {
+  //       JsonArray pixelData = pixelsObj[String(i)]["csv"];
+  //       // If the user didn't send any data for this pixel, just move on
+  //       if (!pixelData.isNull())
+  //       {
+  //         debugPrintln(String("PIXELS: pixel" + String(i) + " is HSV!"));
+
+  //         int hue = pixelData[0];
+  //         int sat = pixelData[1];
+  //         // We support setting the brightness this way, even if HA insists on sending it seperate, will default to brightness
+  //         int val = pixelData[2];
+
+  //         if (val)
+  //         {
+  //           leds[i] = CHSV(hue, sat, brightness);
+  //         }
+  //         else
+  //         {
+  //           leds[i] = CHSV(hue, sat, val);
+  //         }
+  //       }
+  //     }
+  //     debugPrintln(String("Pixel ") + String(i) + " will be: [" + String(leds[i][0]) + "," + String(leds[i][1]) + "," + String(leds[i][2]) + "]");
+  //   }
+  // }
+  // else
+  // {
+  //   debugPrintln(String("PIXELS: got null pixelsObj"));
+  // }
+
+  // // Pull out the command object and turn LEDs on/off after setting colors
+  // JsonObject cmdObj = pixelDocument["c"];
+
+  // // Process the command object, first
+  // if (!cmdObj.isNull())
+  // {
+  //   debugPrintln(String("PIXELS: Got: '" + String(cmdObj.size()) + "' commands..."));
+  //   for (uint8_t i = 0; i < NUM_LEDS; i++)
+  //   {
+  //     String cmd = cmdObj[String(i)];
+
+  //     // Did the user ask us to turn a specific pixel on?
+  //     if (cmd == "on")
+  //     {
+  //       // Fetch the state of the LED prior to clearing it out
+  //       leds[i][0] = led_cache[i][0];
+  //       leds[i][1] = led_cache[i][1];
+  //       leds[i][2] = led_cache[i][2];
+  //     }
+  //     else if (cmd == "off")
+  //     {
+  //       // Save the current LED state
+  //       led_cache[i][0] = leds[i][0];
+  //       led_cache[i][1] = leds[i][1];
+  //       led_cache[i][2] = leds[i][2];
+  //       // Write 0's
+  //       leds[i][0] = 0;
+  //       leds[i][1] = 0;
+  //       leds[i][2] = 0;
+  //     }
+  //   }
+  // }
+  // else
+  // {
+  //   debugPrintln(String("PIXELS: got null cmdObj"));
+  // }
+
+  // Finally, write out updated pixel buffers
+  // TODO: here is where i'll call the same function that the generic /cmnd topic handler implements
+  //pixelUpdate();
+
+  updateMetaLightState();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+void updateMetaLightState()
+{
+  /*
+    Small function to write the state of all the meta lights to MQTT.
+        {
+          "v": 1,
+          "ml": {
+            "selectedforegroundcolor": [255, 255, 255],
+            "selectedbackgroundcolor": [255, 255, 255],
+            "unselectedforegroundcolor": [255, 255, 255],
+            "unselectedbackgroundcolor": [255, 255, 255]
+          }
+        }
+  */
+  // See: https://arduinojson.org/v6/assistant/
+  const size_t metaLightDiscoDocSize = 4 * JSON_ARRAY_SIZE(3) + JSON_OBJECT_SIZE(3) + JSON_OBJECT_SIZE(4);
+  DynamicJsonDocument metaLightStateDoc(metaLightDiscoDocSize);
+
+  metaLightStateDoc["v"] = 1;
+  // WE always advertise the 'lights' are ON
+  metaLightStateDoc["s"] = "ON";
+
+  JsonObject ml = metaLightStateDoc.createNestedObject("ml");
+
+  // For each of the 'lights' compose and publish the discovery doc
+  for (int i = 0; i < 4; i++)
+  {
+    // Get the name of the 'light'
+    String mlName = String(metaLights[i]);
+
+    // make a new key w/ the light name
+    JsonArray pixArr = ml.createNestedArray(mlName);
+    // And for *now* we're just going to hard-code the values.
+    // TODO: will probably need to implement something to keep track of this
+    pixArr.add(255);
+    pixArr.add(255);
+    pixArr.add(255);
+  }
+
+  // Not 100% sure why i can't allocate the char buffer dynamically based on pixelState.memoryUsage();... refuses to compile :/
+  char output[512];
+  serializeJson(metaLightStateDoc, output);
+  debugPrintln(String(F("METALIGHT: STATE PAYLOAD: '")) + String(output));
+  mqttClient.publish(mqttMetaLightStateTopic, String(output));
+}
