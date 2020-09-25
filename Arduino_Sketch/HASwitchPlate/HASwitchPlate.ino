@@ -69,6 +69,9 @@ char motionPinConfig[3] = "0";
 #include <EEPROM.h>
 #include <SoftwareSerial.h>
 
+// Set to 1 if you want the HASP to auto-configure the LCD backlite
+#define AUTOCCONF_LCD_BACKLIGHT 1
+
 // Set this to 1 to enable LDR support
 #define LDR_SUPPORT 1
 
@@ -2904,8 +2907,10 @@ void announceAllToHomeAssistant()
   announcePixelsToHA();
 #endif
 
-  // Tell HA about the LCD backlight
+#ifdef AUTOCCONF_LCD_BACKLIGHT
+  // Tell HA about the LCD backlight. Shows up in HA as a simple dimmable light
   announceLCDBackLightToHA();
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3196,6 +3201,9 @@ void announcePixelsToHA()
     debugPrintln(String(F("PIXEL: DISCOVERY PAYLOAD: '")) + String(output));
     mqttClient.publish(discoTopic, String(output));
   }
+
+  // After announcing pixels, we'll want to announce their state so HA is not guessing about their state
+  updatePixelState();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -3579,6 +3587,7 @@ void announceRSSItoHA()
 }
 #endif
 
+#ifdef AUTOCCONF_LCD_BACKLIGHT
 void announceLCDBackLightToHA()
 {
   /*
@@ -3651,3 +3660,4 @@ void announceLCDBackLightToHA()
   debugPrintln(String(F("BACKLIGHT: DISCOVERY PAYLOAD: '")) + String(output));
   mqttClient.publish(discoTopic, String(output));
 }
+#endif
