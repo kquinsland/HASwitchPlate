@@ -133,7 +133,7 @@ int led_cache[NUM_LEDS][3];
     the ArduinoJson library has a few macros to help w/ allocation. Don't forget bytes for misc/dupe characters!
     See: https://arduinojson.org/v6/assistant/
 */
-const int pixelJsonBufferSize = 3 * JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + (NUM_LEDS * JSON_OBJECT_SIZE(1)) + 56;
+const int pixelJsonBufferSize = 3 * JSON_OBJECT_SIZE(4) + (NUM_LEDS * JSON_ARRAY_SIZE(3)) + (NUM_LEDS * JSON_OBJECT_SIZE(1)) + 64;
 
 #endif
 
@@ -2949,7 +2949,7 @@ void announceLDRtoHA()
   mqttLDRDiscoTopic = "homeassistant/sensor/" + mqttClientId + "/ldr/config";
 
   // Space we need to allocate for the disco payload
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(7) + 248;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(7) + 512;
   DynamicJsonDocument discoDoc(discoMsgSize);
 
   // Use the user-configuerd name to drive the name of this component
@@ -3119,7 +3119,7 @@ void announcePixelsToHA()
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(17) + 644;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(17) + 1024;
 
   // Generate the discovery topic for *this* pixel.
   for (uint8_t i = 0; i < NUM_LEDS; i++)
@@ -3534,7 +3534,7 @@ void announceRSSItoHA()
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 359;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 512;
 
   // Build the topic we'll publish to
   String discoTopic = "homeassistant/sensor/" + String(mqttClientId) + "/rssi/config";
@@ -3616,7 +3616,7 @@ void announceLCDBackLightToHA()
   */
 
   // See: https://arduinojson.org/v6/assistant/
-  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 354;
+  const size_t discoMsgSize = 2 * JSON_ARRAY_SIZE(1) + JSON_ARRAY_SIZE(2) + JSON_OBJECT_SIZE(5) + JSON_OBJECT_SIZE(11) + 512;
   // TODO: re-generate the sizes for ALL documents based on the MAX length of the mqttClientID and haspNode
 
   String discoTopic = "homeassistant/light/" + String(mqttClientId) + "/backlight/config";
